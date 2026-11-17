@@ -21,19 +21,4 @@ changelog:
   filters:
     exclude: ["^docs:", "^test:", "^ci:", "^chore:"]
 
-homebrew_casks:
-  - name: splitroute
-    binaries: [splitroute]
-    homepage: https://github.com/aliraghebi/splitroute
-    description: Route chosen IP lists outside a VPN (direct) or drop them (block)
-    repository:
-      owner: aliraghebi
-      name: homebrew-tap
-      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
-    # The binary isn't signed or notarized; without this macOS refuses to run it.
-    hooks:
-      post:
-        install_steps: |
-          on_macos do
-            run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ .StagedPath }}/splitroute"]
-          end
+# The Homebrew cask installs the macOS app (see the app job in release.yml).

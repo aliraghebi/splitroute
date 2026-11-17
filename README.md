@@ -31,16 +31,31 @@ sudo ip route del 2.144.0.0/14
 
 ## Install
 
+### macOS app
+
 ```sh
-brew install --cask aliraghebi/tap/splitroute         # macOS
-go install github.com/aliraghebi/splitroute@latest    # any OS with Go; copy the binary to /usr/local/bin
+brew install --cask aliraghebi/tap/splitroute
 ```
+
+This installs **Splitroute.app** (a menu bar app, macOS 13 or later) and the `splitroute` command. Open the app
+and choose **Install Service**: it asks for your administrator password once and starts the service.
+
+- The menu bar icon shows a green dot when routes are active, red when turned off or the service isn't
+  running, and orange when something needs attention.
+- **Settings** lists your lists and their actions, adds release lists, creates custom lists of your own
+  addresses, and applies presets. Changes take effect when you click **Apply**.
+- Quitting the app only removes the icon; the service keeps routing until you turn it off or uninstall it.
+- The app is not notarized; the cask removes the quarantine flag so macOS opens it. Without Homebrew, run
+  `xattr -dr com.apple.quarantine /Applications/Splitroute.app` after unzipping.
+
+### Command line only
 
 Prebuilt binaries for macOS and Linux (amd64, arm64) are on the [releases page](https://github.com/aliraghebi/splitroute/releases),
 with `checksums.txt` and build provenance attestations:
 
 ```sh
 gh attestation verify splitroute_*_linux_amd64.tar.gz --repo aliraghebi/splitroute
+go install github.com/aliraghebi/splitroute@latest    # or build it; copy the binary to /usr/local/bin
 ```
 
 ## Use
@@ -52,24 +67,57 @@ sudo splitroute down        # remove every route it added
 sudo splitroute install     # run as a service (launchd / systemd): now and at boot
 sudo splitroute uninstall   # stop the service and remove the routes
 splitroute lists            # lists available in the latest routing-rules release
+splitroute preset           # presets; `sudo splitroute preset <id>` applies one
 ```
 
 Add `--dry-run` to any command to print the route changes instead of making them.
 
 ## Config
 
-`/etc/splitroute.conf` (or `--config <path>`). Without it, `ir-cidr = direct`.
+`/etc/splitroute.conf` (or `--config <path>`), JSON. Without it, `ir-cidr` goes direct.
 
-```ini
-ir-cidr  = direct   # through your normal connection, outside the VPN
-malware  = block    # dropped
-telegram = vpn      # left alone: follows the VPN
-# base_url = https://github.com/aliraghebi/routing-rules/releases/latest/download
+```json
+{
+  "lists": [
+    {"name": "ir-cidr", "action": "direct"},
+    {"name": "malware", "action": "block"},
+    {"name": "telegram", "action": "vpn"},
+    {"name": "Work", "custom": true, "action": "direct", "entries": ["203.0.113.7", "198.51.100.0/24"]}
+  ]
+}
 ```
 
+- `direct`: through your normal connection, outside the VPN. `block`: dropped. `vpn`: left alone.
+- A release list is named as in `splitroute lists`. A custom list has any name and your own IPv4 addresses
+  and ranges (domains are not supported yet).
+- `"disabled": true` removes the routes but keeps the service running.
+- `"base_url"` overrides the release URL (https only).
+- The 0.1 format (`ir-cidr = direct` lines) is still read; saving from the app or `preset` rewrites it as JSON.
+
 Only a list's **IPv4 ranges** are routed; domain-only lists (`ads`, `nsfw`, …) have no effect. The service
-picks up config changes with its daily refresh; run `sudo splitroute up` (or restart the service) to apply
-them now.
+applies config changes within 15 seconds.
+
+### Presets
+
+```sh
+splitroute preset            # show presets
+sudo splitroute preset iran  # replace the release lists with the preset's; custom lists are kept
+```
+
+| Preset | Lists |
+|--------|-------|
+| `iran` | direct: `ir-cidr`; block: `malware`, `phishing` |
+| `security` | block: `malware`, `phishing` |
+
+### Control socket
+
+The service listens on `/var/run/splitroute.sock` (macOS, group `admin`) or `/run/splitroute.sock` (Linux,
+root only): one JSON request per connection, one JSON response. Commands: `status`, `get_config`,
+`set_config`, `set_enabled`, `apply_preset`, `lists`, `presets` (see `api.go`).
+
+```sh
+echo '{"cmd":"status"}' | nc -U /var/run/splitroute.sock
+```
 
 ## Safety
 
@@ -93,6 +141,7 @@ them now.
 gofmt -l . && go vet ./... && go test ./...
 go run . status
 go run . up --dry-run
+macos/build-app.sh          # macos/build/Splitroute.app (needs Xcode)
 ```
 
 ## License
