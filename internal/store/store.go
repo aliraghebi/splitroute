@@ -8,6 +8,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"embed"
 	"errors"
@@ -28,7 +29,16 @@ import (
 )
 
 //go:embed migrations/*.sql
-var migrationFS embed.FS
+var embedded embed.FS
+
+// migrationFS holds the numbered migrations (tests swap it).
+var migrationFS, _ = fs.Sub(embedded, "migrations")
+
+// fkOff marks a migration that rebuilds a table: it runs with foreign keys
+// off, because PRAGMA foreign_keys is a no-op inside a transaction and
+// DROP TABLE lists would otherwise cascade to every entry. The runner checks
+// foreign_key_check before committing.
+const fkOff = "-- splitroute: foreign_keys=off"
 
 // ErrNotInitialized: the database has no settings yet (before the first
 // run as root imported the config file).
@@ -52,6 +62,11 @@ func Open(file string) (*Store, error) {
 	if f, err := os.OpenFile(file, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o644); err == nil {
 		f.Close()
 	} else if !errors.Is(err, fs.ErrExist) {
+		return nil, err
+	}
+	// 0644 regardless of umask: non-root status and config export read it.
+	// SQLite gives its journal file the same mode and owner.
+	if err := os.Chmod(file, 0o644); err != nil {
 		return nil, err
 	}
 	s, err := open(file, "rwc", "_txlock=immediate", "_pragma=journal_mode(DELETE)")
@@ -92,7 +107,12 @@ func open(file, mode string, params ...string) (*Store, error) {
 		"mode=" + mode,
 		"_pragma=foreign_keys(1)",
 		"_pragma=busy_timeout(5000)",
-		"_pragma=synchronous(FULL)",
+		// EXTRA also syncs the directory after the rollback journal is
+		// deleted, so a power cut can't bring the journal back and undo a
+		// commit; fullfsync uses F_FULLFSYNC on macOS, where fsync alone
+		// doesn't reach the disk. Writes are rare; the cost doesn't matter.
+		"_pragma=synchronous(EXTRA)",
+		"_pragma=fullfsync(1)",
 	}, params...)
 	dsn := (&url.URL{Scheme: "file", Path: file, RawQuery: strings.Join(q, "&")}).String()
 	db, err := sql.Open("sqlite", dsn)
@@ -120,7 +140,7 @@ func open(file, mode string, params ...string) (*Store, error) {
 func (s *Store) Close() error { return s.db.Close() }
 
 func migrations() []string {
-	names, _ := fs.Glob(migrationFS, "migrations/*.sql")
+	names, _ := fs.Glob(migrationFS, "*.sql")
 	slices.Sort(names)
 	return names
 }
@@ -131,39 +151,77 @@ func (s *Store) version() (int, error) {
 	return v, err
 }
 
-// migrate applies each migration in its own transaction, together with the
-// user_version bump, so a crash leaves the database at a whole version.
+// migrate applies each pending migration in its own immediate transaction,
+// together with the user_version bump, so a crash leaves the database at a
+// whole version. The version is re-read inside the transaction: another
+// process (the daemon and a root CLI starting together on a new file) may
+// have applied it while this one waited for the lock.
 func (s *Store) migrate() error {
+	ms := migrations()
 	v, err := s.version()
 	if err != nil {
 		return err
 	}
-	ms := migrations()
 	if v > len(ms) {
 		return fmt.Errorf("schema version %d is newer than this splitroute (%d); upgrade splitroute", v, len(ms))
 	}
 	for i := v; i < len(ms); i++ {
-		b, err := migrationFS.ReadFile(ms[i])
-		if err != nil {
-			return err
-		}
-		tx, err := s.db.Begin()
-		if err != nil {
-			return err
-		}
-		if _, err := tx.Exec(string(b)); err != nil {
-			tx.Rollback()
+		if err := s.apply(i+1, ms[i]); err != nil {
 			return fmt.Errorf("%s: %w", path.Base(ms[i]), err)
-		}
-		if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", i+1)); err != nil {
-			tx.Rollback()
-			return err
-		}
-		if err := tx.Commit(); err != nil {
-			return err
 		}
 	}
 	return nil
+}
+
+func (s *Store) apply(version int, name string) (err error) {
+	b, err := fs.ReadFile(migrationFS, name)
+	if err != nil {
+		return err
+	}
+	rebuild := strings.HasPrefix(string(b), fkOff)
+	if rebuild {
+		// Outside the transaction, on the pool's only connection.
+		if _, err := s.db.Exec("PRAGMA foreign_keys = OFF"); err != nil {
+			return err
+		}
+		defer func() {
+			if _, ferr := s.db.Exec("PRAGMA foreign_keys = ON"); ferr != nil && err == nil {
+				err = ferr
+			}
+		}()
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var cur int
+	if err := tx.QueryRow("PRAGMA user_version").Scan(&cur); err != nil {
+		return err
+	}
+	if cur >= version {
+		return nil // applied by another process meanwhile
+	}
+	if _, err := tx.Exec(string(b)); err != nil {
+		return err
+	}
+	if rebuild {
+		rows, err := tx.Query("PRAGMA foreign_key_check")
+		if err != nil {
+			return err
+		}
+		bad := rows.Next()
+		if err := closeRows(rows); err != nil {
+			return err
+		}
+		if bad {
+			return errors.New("foreign key violations after the migration")
+		}
+	}
+	if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", version)); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // Init stores cfg as the first settings, if there are none yet; from records
@@ -202,9 +260,10 @@ func (s *Store) MigratedFrom() (string, time.Time, error) {
 	return from, t, err
 }
 
-// Config reads the settings. ErrNotInitialized if there are none yet.
+// Config reads the settings. ErrNotInitialized if there are none yet. It
+// reads in a plain (deferred) transaction, so it never holds the write lock.
 func (s *Store) Config() (config.Config, error) {
-	tx, err := s.db.Begin()
+	tx, err := s.db.BeginTx(context.Background(), &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return config.Config{}, err
 	}

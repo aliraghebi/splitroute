@@ -262,3 +262,11 @@ func itoa(i int) string {
 		}
 	}
 }
+
+func assertMode(t *testing.T, file string, want os.FileMode) {
+	t.Helper()
+	fi, err := os.Stat(file)
+	if err != nil || fi.Mode().Perm() != want {
+		t.Fatalf("%s: mode %v, %v; want %v", file, fi.Mode().Perm(), err, want)
+	}
+}
