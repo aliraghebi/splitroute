@@ -114,8 +114,8 @@ enum DaemonError: LocalizedError, Equatable {
 
     var errorDescription: String? {
         switch self {
-        case .notRunning: return "The splitroute service is not running."
-        case .denied: return "Only administrator accounts can control splitroute."
+        case .notRunning: return "The Splitroute service is not running."
+        case .denied: return "Only administrator accounts can control Splitroute."
         case .failed(let msg): return msg
         }
     }

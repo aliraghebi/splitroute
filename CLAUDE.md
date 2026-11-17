@@ -19,7 +19,7 @@ next to a VPN. It runs as root, so correctness and safety beat features.
 | `config.go` | Config (JSON, and the 0.1 `list = action` format), validation, custom list entries, presets |
 | `api.go` | Control socket for the menu bar app: one JSON request/response per connection |
 | `lists.go` | Download, `SHA256SUMS` check, last-good cache, `.list` parsing and range validation, `lists` command |
-| `macos/` | Swift menu bar app (SwiftPM, macOS 13+): AppKit status item, SwiftUI settings, socket client in `Daemon.swift`. `build-app.sh` bundles the Go binary into `Splitroute.app`; `splitroute.rb.in` is the cask |
+| `macos/` | Swift menu bar app (SwiftPM, macOS 13+): AppKit status item, SwiftUI settings, socket client in `Daemon.swift`. `build-app.sh` bundles the Go binary into `Splitroute.app` and the DMG; `assets/` draws the app icon and DMG background (Swift scripts) and holds the `dmgbuild` layout; `splitroute.rb.in` is the cask |
 | `routes.go` | Pure logic: plan, diff (`changes`), per-OS command builders, output parsers |
 
 ## Rules

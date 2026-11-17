@@ -7,6 +7,8 @@ struct SettingsView: View {
     @State private var presetID = ""
     @State private var confirmPreset = false
     @State private var editor: EditorTarget?
+    @AppStorage("quitAction") private var quitAction = "" // read by AppDelegate.quit
+    @AppStorage("turnOnAtOpen") private var turnOnAtOpen = false // read by AppModel
 
     private var dirty: Bool { model.config.map { $0 != draft } ?? false }
 
@@ -76,7 +78,7 @@ struct SettingsView: View {
 
     private var notRunningSection: some View {
         Section {
-            Text("splitroute runs as a system service so it can change routes. Installing it asks for your administrator password once.")
+            Text("Splitroute runs as a system service so it can change routes. Installing it asks for your administrator password once.")
                 .fixedSize(horizontal: false, vertical: true)
             if model.connError == .notRunning {
                 Button("Install Service") { Task { await model.installService() } }
@@ -152,12 +154,18 @@ struct SettingsView: View {
                 get: { model.launchAtLogin },
                 set: { model.setLaunchAtLogin($0) }
             ))
+            Toggle("Turn on routing when the app opens", isOn: $turnOnAtOpen)
+            Picker("When quitting while routing", selection: $quitAction) {
+                Text("Ask").tag("")
+                Text("Turn off routing").tag("turnOff")
+                Text("Keep routing").tag("keep")
+            }
             LabeledContent("System service") {
                 Button("Uninstall…") { Task { await model.uninstallService() } }
                     .disabled(model.busy)
             }
         } footer: {
-            Text("Quitting this app only closes the menu bar icon; the service keeps routing until you turn it off or uninstall it.")
+            Text("The service runs on its own: with Keep routing, quitting only closes the menu bar icon.")
                 .font(.caption).foregroundStyle(.secondary)
         }
     }

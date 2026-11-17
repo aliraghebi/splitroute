@@ -48,7 +48,11 @@ an update, to restart the service on the new version).
   running, and orange when something needs attention.
 - **Settings** lists your lists and their actions, adds release lists, creates custom lists of your own
   addresses, and applies presets. Changes take effect when you click **Apply**.
-- Quitting the app only removes the icon; the service keeps routing until you turn it off or uninstall it.
+- The service runs on its own, so quitting the app doesn't stop routing by itself. While routes are active,
+  **Quit** asks whether to turn them off first (**Settings → When quitting while routing** changes the default).
+  With **Turn on routing when the app opens**, opening the app turns routing back on, so the app's lifetime
+  can match routing's.
+- The app opens at login after the first install, so the menu bar icon shows the routing state after a restart.
 - The app is not notarized; the cask removes the quarantine flag so macOS opens it. From the DMG, macOS
   refuses to open it the first time: run `xattr -dr com.apple.quarantine /Applications/Splitroute.app`, or
   click **Open Anyway** in System Settings → Privacy & Security.

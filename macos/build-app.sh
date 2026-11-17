@@ -14,6 +14,7 @@ rm -rf build && mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 vtool -set-build-version macos 13.0 "$(xcrun --show-sdk-version)" -replace \
   -output "$APP/Contents/MacOS/Splitroute" "$BIN/Splitroute"
 sed "s/@VERSION@/$VERSION/g" Info.plist > "$APP/Contents/Info.plist"
+swift assets/icon.swift "$APP/Contents/Resources/AppIcon.icns"
 
 for arch in arm64 amd64; do
   (cd .. && CGO_ENABLED=0 GOOS=darwin GOARCH=$arch go build -trimpath \
@@ -25,10 +26,12 @@ rm build/splitroute-arm64 build/splitroute-amd64
 codesign --force --sign - "$APP/Contents/Resources/splitroute"
 codesign --force --sign - "$APP"
 
-# Drag-to-install disk image: the app next to an Applications symlink.
-mkdir build/dmg
-cp -R "$APP" build/dmg/
-ln -s /Applications build/dmg/Applications
-hdiutil create -quiet -volname splitroute -srcfolder build/dmg -ov -format UDZO build/Splitroute.dmg
-rm -rf build/dmg
+# Drag-to-install disk image with a styled window (assets/). dmgbuild writes the
+# Finder layout without driving Finder, so it works headless on CI.
+VENV=.build/dmgbuild-venv
+[ -x "$VENV/bin/dmgbuild" ] || { python3 -m venv "$VENV" && "$VENV/bin/pip" install -q dmgbuild==1.6.7; }
+swift assets/background.swift build/background.tiff
+"$VENV/bin/dmgbuild" -s assets/dmg-settings.py -D app="$APP" -D background=build/background.tiff \
+  Splitroute build/Splitroute.dmg >/dev/null
+rm build/background.tiff
 echo "$APP build/Splitroute.dmg"

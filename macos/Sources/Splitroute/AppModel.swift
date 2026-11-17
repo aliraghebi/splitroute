@@ -21,6 +21,7 @@ final class AppModel: ObservableObject {
             while let self {
                 await self.refreshStatus()
                 await self.autoInstallIfNeeded()
+                await self.turnOnAtOpenIfNeeded()
                 try? await Task.sleep(nanoseconds: Self.pollInterval)
             }
         }
@@ -117,13 +118,17 @@ final class AppModel: ObservableObject {
     private static let uninstalledKey = "serviceUninstalledByUser"
 
     func installService() async {
+        let fresh = !FileManager.default.fileExists(atPath: Self.servicePlist)
         UserDefaults.standard.removeObject(forKey: Self.uninstalledKey)
-        await runPrivileged("install", prompt: "splitroute needs your password to install its routing service.")
+        await runPrivileged("install", prompt: "Splitroute needs your password to install its routing service.")
+        // On a first install, open at login so the routing state stays visible
+        // after a reboot. Not on reinstalls: the user may have turned it off.
+        if fresh, connError == nil, !launchAtLogin { setLaunchAtLogin(true) }
     }
 
     func uninstallService() async {
         UserDefaults.standard.set(true, forKey: Self.uninstalledKey)
-        await runPrivileged("uninstall", prompt: "splitroute needs your password to remove its routing service.")
+        await runPrivileged("uninstall", prompt: "Splitroute needs your password to remove its routing service.")
     }
 
     /// Asks for the password without a click: on first launch when the service
@@ -140,6 +145,16 @@ final class AppModel: ObservableObject {
         guard neverInstalled || serviceOutdated else { return }
         d.set(Self.appVersion, forKey: Self.promptedKey)
         await installService()
+    }
+
+    private var openChecked = false
+
+    /// "Turn on when the app opens": once per launch, at the first status from the
+    /// service. Only once, so turning routing off later in the session sticks.
+    private func turnOnAtOpenIfNeeded() async {
+        guard !openChecked, let s = status else { return }
+        openChecked = true
+        if !s.enabled, UserDefaults.standard.bool(forKey: "turnOnAtOpen") { await setEnabled(true) }
     }
 
     private func runPrivileged(_ command: String, prompt: String) async {
