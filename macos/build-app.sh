@@ -9,7 +9,10 @@ APP=build/Splitroute.app
 swift build -c release --arch arm64 --arch x86_64
 BIN=$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)
 rm -rf build && mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp "$BIN/Splitroute" "$APP/Contents/MacOS/"
+# SwiftPM records the deployment target as the SDK version, so AppKit would run
+# the app in compatibility mode (no Liquid Glass on macOS 26+). Record the real SDK.
+vtool -set-build-version macos 13.0 "$(xcrun --show-sdk-version)" -replace \
+  -output "$APP/Contents/MacOS/Splitroute" "$BIN/Splitroute"
 sed "s/@VERSION@/$VERSION/g" Info.plist > "$APP/Contents/Info.plist"
 
 for arch in arm64 amd64; do
