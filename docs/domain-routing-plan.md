@@ -78,12 +78,12 @@ Measure on macOS 13 and 26+:
 
 ## Step 2: implementation
 
-Keep the CLAUDE.md rules: stdlib only, pure logic tested on any OS, only `app.query`/`app.change` change the
+Keep the CLAUDE.md rules: pure logic tested on any OS, only `app.query`/`app.change` change the
 system, `down` removes exactly what `up` added, route cap, never write an empty state over a real one.
 
-- **DNS parsing (`dns.go`, pure):** a minimal parser and builder (header, question, A/AAAA/CNAME answers,
-  NXDOMAIN reply, TTLs). Go has no stdlib DNS message package (`dnsmessage` is in `golang.org/x/net`);
-  write it, about 150 lines, with fixtures captured from real `dig` traffic.
+- **DNS parsing (`dns.go`, pure):** parse and build with `golang.org/x/net/dns/dnsmessage` (header,
+  question, A/AAAA/CNAME answers, NXDOMAIN and SERVFAIL replies, TTLs). Tests use fixtures captured from
+  real `dig` traffic.
 - **Lists (`lists.go`):** keep domain entries instead of dropping them; validate (no wildcards beyond the
   domain-suffix meaning, length limits, lowercase, punycode only). Cap domains per list like routes.
 - **Plan (`routes.go`, pure):** `planDomains(cfg, lists) -> map[domain]Action`, block beats direct like IPs.

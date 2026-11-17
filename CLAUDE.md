@@ -4,6 +4,9 @@
 [routing-rules](https://github.com/aliraghebi/routing-rules) go direct (physical gateway) or are blocked,
 next to a VPN. It runs as root, so correctness and safety beat features.
 
+Direction (see `docs/roadmap.md`): now: split into packages, typed rules (CIDR, domain, ASN), user lists
+and imports, and a redesigned macOS settings app. Later: our own tunnels and mobile apps on the same Go core.
+
 ## Layout
 
 | File | Role |
@@ -24,7 +27,10 @@ next to a VPN. It runs as root, so correctness and safety beat features.
 
 ## Rules
 
-- Stdlib only. Keep logic pure and OS-independent (`goos` is a parameter) so it's tested on any OS; only
+- Dependencies only when needed: prefer stdlib, add a package when writing it ourselves would be bigger or
+  riskier (DNS messages, tunnel protocols, TUN stacks). Each new dependency: maintained, license compatible
+  with GPL-3.0, pinned in `go.mod`, and the reason in the commit message. No dependency for a few lines of code.
+- Keep logic pure and OS-independent (`goos` is a parameter) so it's tested on any OS; only
   `app.query` / `app.change` touch the system.
 - Never weaken the safety checks: ranges broader than /8 are refused, reserved ranges are skipped, the route
   count is capped, lists must match `SHA256SUMS`, and `down` removes exactly what `up` added.
