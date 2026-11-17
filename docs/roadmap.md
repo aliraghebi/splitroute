@@ -74,8 +74,9 @@ Policy = ordered [{list, action}]      action: direct | block | vpn
    (+0.26 MB) for integrity checks, constraints and tooling. `internal/store`; the old config file seeds a
    new database once; `config export`/`import`. Release list cache and `state.json` stay files for now;
    state moves in with learned DNS addresses (domain step).
-3. **User lists**: any entry type, created from the CLI and the app, as rows in the database. Finer socket
-   commands (add/remove entries, reorder) instead of whole-config `set_config`.
+3. **User lists**: done (CLI and socket; the app adopts the socket commands in the redesign). Pure edits in
+   `config/edit.go`, each run through `store.Update`, so one edit rewrites the config in one transaction:
+   fine for hand-made lists (cap 100k entries). Imports get a direct path to `entries` instead.
 4. **ASN**: routing-rules publishes per-ASN CIDR lists at build time from public BGP data (separate repo
    change). The client treats them as CIDR lists: offline, `SHA256SUMS`-checked. `AS12345` typed in a user
    list resolves via the routing-rules index, never a live third-party API from a root daemon.

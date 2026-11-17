@@ -11,11 +11,23 @@
 //	{"cmd": "apply_preset", "preset": "iran"}  → config
 //	{"cmd": "lists"}                           → lists available in the latest release
 //	{"cmd": "presets"}                         → presets
+//
+// List edits (each → config; entry edits also → edit counts):
+//
+//	{"cmd": "list_create", "name": "Work", "action": "direct"}       new custom list
+//	{"cmd": "list_enable", "name": "telegram", "action": "vpn"}      add a release list
+//	{"cmd": "list_remove", "name": "Work"}
+//	{"cmd": "list_rename", "name": "Work", "new_name": "Office"}     custom lists only
+//	{"cmd": "list_set_action", "name": "Work", "action": "block"}
+//	{"cmd": "list_move", "name": "Work", "position": 0}              0-based
+//	{"cmd": "entries_add", "name": "Work", "entries": ["example.com"]}
+//	{"cmd": "entries_remove", "name": "Work", "entries": ["example.com"]}
 package api
 
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -25,6 +37,7 @@ import (
 	"time"
 
 	"github.com/aliraghebi/splitroute/internal/config"
+	"github.com/aliraghebi/splitroute/internal/rules"
 )
 
 // Backend is what the socket needs from the daemon.
@@ -42,15 +55,23 @@ type Request struct {
 	Config  *config.Config `json:"config,omitempty"`
 	Enabled *bool          `json:"enabled,omitempty"`
 	Preset  string         `json:"preset,omitempty"`
+
+	// List edits.
+	Name     string       `json:"name,omitempty"`
+	NewName  string       `json:"new_name,omitempty"`
+	Action   rules.Action `json:"action,omitempty"`
+	Position *int         `json:"position,omitempty"`
+	Entries  []string     `json:"entries,omitempty"`
 }
 
 type Response struct {
-	OK      bool            `json:"ok"`
-	Error   string          `json:"error,omitempty"`
-	Status  *Status         `json:"status,omitempty"`
-	Config  *config.Config  `json:"config,omitempty"`
-	Lists   []string        `json:"lists,omitempty"`
-	Presets []config.Preset `json:"presets,omitempty"`
+	OK      bool              `json:"ok"`
+	Error   string            `json:"error,omitempty"`
+	Status  *Status           `json:"status,omitempty"`
+	Config  *config.Config    `json:"config,omitempty"`
+	Lists   []string          `json:"lists,omitempty"`
+	Presets []config.Preset   `json:"presets,omitempty"`
+	Edit    *config.EntryEdit `json:"edit,omitempty"` // entries_add, entries_remove
 }
 
 const (
@@ -147,6 +168,11 @@ func Respond(b Backend, req Request) Response {
 		r.Lists, err = b.AvailableLists()
 	case "presets":
 		r.Presets = config.Presets
+	case "list_create", "list_enable", "list_remove", "list_rename", "list_set_action", "list_move", "entries_add", "entries_remove":
+		var edit func(config.Config) (config.Config, error)
+		if edit, err = listEdit(req, &r); err == nil {
+			r.Config, err = update(b, edit)
+		}
 	default:
 		err = errors.New("unknown command " + strconv.Quote(req.Cmd))
 	}
@@ -163,4 +189,40 @@ func update(b Backend, f func(config.Config) (config.Config, error)) (*config.Co
 		return nil, err
 	}
 	return &cfg, nil
+}
+
+// listEdit turns a list edit request into a config change. Entry counts land
+// in r.Edit when the change runs.
+func listEdit(req Request, r *Response) (func(config.Config) (config.Config, error), error) {
+	if req.Name == "" {
+		return nil, fmt.Errorf("%s needs a name", req.Cmd)
+	}
+	switch req.Cmd {
+	case "list_create":
+		return func(c config.Config) (config.Config, error) { return config.CreateList(c, req.Name, req.Action) }, nil
+	case "list_enable":
+		return func(c config.Config) (config.Config, error) { return config.EnableRelease(c, req.Name, req.Action) }, nil
+	case "list_remove":
+		return func(c config.Config) (config.Config, error) { return config.RemoveList(c, req.Name) }, nil
+	case "list_rename":
+		return func(c config.Config) (config.Config, error) { return config.RenameList(c, req.Name, req.NewName) }, nil
+	case "list_set_action":
+		return func(c config.Config) (config.Config, error) { return config.SetAction(c, req.Name, req.Action) }, nil
+	case "list_move":
+		if req.Position == nil {
+			return nil, errors.New("list_move needs a position")
+		}
+		return func(c config.Config) (config.Config, error) { return config.MoveList(c, req.Name, *req.Position) }, nil
+	case "entries_add", "entries_remove":
+		op := config.AddEntries
+		if req.Cmd == "entries_remove" {
+			op = config.RemoveEntries
+		}
+		return func(c config.Config) (config.Config, error) {
+			c, ed, err := op(c, req.Name, req.Entries)
+			r.Edit = &ed
+			return c, err
+		}, nil
+	}
+	return nil, errors.New("unknown command " + strconv.Quote(req.Cmd))
 }

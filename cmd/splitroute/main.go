@@ -10,6 +10,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"runtime"
@@ -35,14 +36,14 @@ Commands:
   down       remove every route splitroute added
   status     show the gateway, VPN and applied routes
   watch      apply, then keep routes correct as the network changes (run by the service)
+  list       show and edit your lists ("splitroute list help")
   lists      show the lists available in the latest release
   preset     list presets; "preset <id>" replaces the release lists with a preset's
   install    install and start the system service (launchd or systemd)
   uninstall  stop and remove the service, then remove the routes
+  config     "config export" prints the settings as JSON;
+             "config import <file>" replaces them with a JSON (or 0.1-format) file
   version    print the version
-
-  config export         print the settings as JSON
-  config import <file>  replace the settings with a JSON (or 0.1-format) file
 
 Settings live in a database in the state directory. The first run as root
 imports the config file (default /etc/splitroute.conf; without it, ir-cidr goes
@@ -85,7 +86,7 @@ func main() {
 		}
 		args = append(args, fs.Arg(0))
 	}
-	if maxArgs := map[string]int{"preset": 1, "config": 2}; len(args) > maxArgs[cmd] {
+	if maxArgs := map[string]int{"preset": 1, "config": 2, "list": 1 << 20}; len(args) > maxArgs[cmd] {
 		fs.Usage()
 		os.Exit(2)
 	}
@@ -107,6 +108,8 @@ type app struct {
 	change   platform.ChangeFunc
 	state    state.Store
 	routes   route.Engine
+	stdin    io.Reader // list add/delete -
+	stdout   io.Writer
 
 	dbMu    sync.Mutex
 	db      *store.Store  // opened on first use by settings()
@@ -116,7 +119,8 @@ type app struct {
 }
 
 func newApp(goos, cfgPath string, dry bool) *app {
-	a := &app{goos: goos, cfgPath: cfgPath, dry: dry, canWrite: !dry && os.Geteuid() == 0, query: platform.ExecQuery, change: platform.ExecChange}
+	a := &app{goos: goos, cfgPath: cfgPath, dry: dry, canWrite: !dry && os.Geteuid() == 0, query: platform.ExecQuery, change: platform.ExecChange,
+		stdin: os.Stdin, stdout: os.Stdout}
 	a.state = state.Store{Dir: state.DefaultDir(goos), Dry: dry}
 	if dry {
 		a.change = func(name string, args []string, stdin string) error {
@@ -133,7 +137,8 @@ func newApp(goos, cfgPath string, dry bool) *app {
 
 func (a *app) do(cmd string, args []string) error {
 	needRoot := map[string]bool{"up": true, "down": true, "watch": true, "install": true, "uninstall": true,
-		"preset": len(args) > 0, "config": len(args) > 0 && args[0] == "import"}
+		"preset": len(args) > 0, "config": len(args) > 0 && args[0] == "import",
+		"list": len(args) > 0 && args[0] != "show"}
 	if needRoot[cmd] && !a.dry && os.Geteuid() != 0 {
 		return fmt.Errorf("%s needs root: run it with sudo", cmd)
 	}
@@ -153,6 +158,8 @@ func (a *app) do(cmd string, args []string) error {
 		return a.runPreset(args)
 	case "config":
 		return a.configCmd(args)
+	case "list":
+		return a.listCmd(args)
 	case "install":
 		return a.install()
 	case "uninstall":

@@ -121,6 +121,25 @@ in place so an older splitroute still finds it. The JSON format:
 Only a list's **IPv4 ranges** are routed; domain-only lists (`ads`, `nsfw`, …) have no effect. The service
 applies settings changes within 15 seconds.
 
+### Lists from the command line
+
+```sh
+splitroute list                                  # configured lists, in order, with entry counts
+splitroute list show Work                        # a custom list's entries
+sudo splitroute list create Work block           # new custom list (direct, block or vpn; default direct)
+sudo splitroute list enable telegram vpn         # add a release list (names: splitroute lists)
+sudo splitroute list add Work 203.0.113.7 example.com AS13335
+sudo splitroute list add Work - < hosts.txt      # one entry per line from stdin; # lines are notes
+sudo splitroute list delete Work example.com
+sudo splitroute list action Work direct
+sudo splitroute list rename Work Office          # custom lists only
+sudo splitroute list move Office 1               # 1 is first
+sudo splitroute list remove Office
+```
+
+Entries already in a list are skipped; one invalid entry rejects the whole command. A custom list holds at
+most 100,000 entries.
+
 ### Presets
 
 ```sh
@@ -137,7 +156,9 @@ sudo splitroute preset iran  # replace the release lists with the preset's; cust
 
 The service listens on `/var/run/splitroute.sock` (macOS, group `admin`) or `/run/splitroute.sock` (Linux,
 root only): one JSON request per connection, one JSON response. Commands: `status`, `get_config`,
-`set_config`, `set_enabled`, `apply_preset`, `lists`, `presets` (see `internal/api/api.go`).
+`set_config`, `set_enabled`, `apply_preset`, `lists`, `presets`, and list edits `list_create`,
+`list_enable`, `list_remove`, `list_rename`, `list_set_action`, `list_move`, `entries_add`, `entries_remove`
+(see `internal/api/api.go`).
 
 ```sh
 echo '{"cmd":"status"}' | nc -U /var/run/splitroute.sock

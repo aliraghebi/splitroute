@@ -11,15 +11,15 @@ and imports, and a redesigned macOS settings app. Later: our own tunnels and mob
 
 | Path | Role |
 |------|------|
-| `cmd/splitroute/` | CLI and the `app`: wiring, `up`/`down` orchestration (`apply.go`), service loop (`watch.go`), install (`service.go`), status printing, config updates and presets (`config.go`); implements `api.Backend`. Owns `query`/`change`, the only functions that run commands |
+| `cmd/splitroute/` | CLI and the `app`: wiring, `up`/`down` orchestration (`apply.go`), service loop (`watch.go`), install (`service.go`), status printing, settings access, presets and `config export|import` (`config.go`), the `list` command (`listcmd.go`); implements `api.Backend`. Owns `query`/`change`, the only functions that run commands |
 | `internal/rules/` | Pure model: `Action`, typed entries (`entry.go`: CIDR, domain, domain suffix, ASN; `ParseEntry` syntax, floors, reserved ranges), `Route`, `Plan` and the route cap |
-| `internal/config/` | `Config` type, `Validate`, JSON and 0.1 `list = action` parsing (import and first-run migration), presets |
+| `internal/config/` | `Config` type, `Validate`, JSON and 0.1 `list = action` parsing (import and first-run migration), presets, pure list edits (`edit.go`: create, enable, remove, rename, action, move, add/remove entries) shared by the CLI and the socket |
 | `internal/store/` | Settings database (SQLite, `modernc.org/sqlite`): schema in `migrations/*.sql` (applied by `PRAGMA user_version`), `Init`/`Config`/`Update` (one transaction), `Changed` (`PRAGMA data_version`) |
 | `internal/lists/` | Download, `SHA256SUMS` check, last-good cache, `.list` parsing into typed entries |
 | `internal/state/` | Saved state file and the lock around route changes |
 | `internal/platform/` | OS-specific: command runner types, gateway/VPN detection and parsers, route socket (`netwatch_{darwin,linux}.go`), launchd/systemd files |
 | `internal/engine/route/` | Route-mode engine: diff (`Changes`), per-OS command builders, apply, remove, presence check |
-| `internal/api/` | Control socket for the menu bar app: one JSON request/response per connection; `Status` wire type |
+| `internal/api/` | Control socket for the menu bar app: one JSON request/response per connection, whole-config and per-list edit commands; `Status` wire type |
 | `internal/fileutil/` | Atomic file write |
 | `macos/` | Swift menu bar app (SwiftPM, macOS 13+): AppKit status item, SwiftUI settings, socket client in `Daemon.swift`. `build-app.sh` bundles the Go binary into `Splitroute.app` and the DMG; `assets/` draws the app icon and DMG background (Swift scripts) and holds the `dmgbuild` layout; `splitroute.rb.in` is the cask |
 

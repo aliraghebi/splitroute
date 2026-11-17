@@ -66,6 +66,9 @@ func (c Config) Validate() error {
 			return fmt.Errorf("list %q listed twice", l.Name)
 		}
 		seen[l.Name] = true
+		if len(l.Entries) > MaxEntries {
+			return fmt.Errorf("list %q has %d lines; the limit is %d entries", l.Name, len(l.Entries), MaxEntries)
+		}
 		if l.Custom {
 			if _, err := rules.ParseEntries(l.Entries); err != nil {
 				return fmt.Errorf("list %q: %w", l.Name, err)

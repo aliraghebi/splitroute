@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/aliraghebi/splitroute/internal/api"
@@ -177,5 +178,66 @@ func TestSettingsChangedAcrossProcesses(t *testing.T) {
 	}
 	if got, err := daemon.LoadConfig(); err != nil || got.Lists[0].Name != "malware" {
 		t.Fatalf("service reads %+v, %v", got, err)
+	}
+}
+
+func TestListCommand(t *testing.T) {
+	a := testApp(t, false, true)
+	var out strings.Builder
+	a.stdout = &out
+	run := func(args ...string) error {
+		t.Helper()
+		out.Reset()
+		return a.listCmd(args)
+	}
+	for _, args := range [][]string{
+		{"create", "Work", "block"},
+		{"enable", "malware", "block"},
+		{"add", "Work", "203.0.113.7", "Example.COM", "2400:cb00::/32"},
+		{"move", "Work", "1"},
+		{"rename", "Work", "Office"},
+		{"action", "Office", "direct"},
+	} {
+		if err := run(args...); err != nil {
+			t.Fatalf("%q: %v", args, err)
+		}
+	}
+	a.stdin = strings.NewReader("# from stdin\nAS13335\nexample.com\n")
+	if err := run("add", "Office", "-"); err != nil {
+		t.Fatal(err)
+	}
+	if err := run("delete", "Office", "203.0.113.7"); err != nil {
+		t.Fatal(err)
+	}
+	if err := run(); err != nil {
+		t.Fatal(err)
+	}
+	want := "  1  direct  Office                custom: 1 domains, 1 IPv6, 1 AS numbers\n" +
+		"  2  direct  ir-cidr               release\n" +
+		"  3  block   malware               release\n"
+	if out.String() != want {
+		t.Fatalf("list:\n%s\nwant:\n%s", out.String(), want)
+	}
+	if err := run("show", "Office"); err != nil || out.String() != "example.com\n2400:cb00::/32\n# from stdin\nAS13335\n" {
+		t.Fatalf("show: %q, %v", out.String(), err)
+	}
+	for _, bad := range [][]string{
+		{"show", "malware"}, {"show", "nope"}, {"create"}, {"create", "a", "b", "c"}, {"move", "Office", "x"},
+		{"move", "Office", "9"}, {"add", "Office"}, {"add", "malware", "1.2.3.4"}, {"add", "Office", "10.0.0.1"},
+		{"rename", "malware", "x"}, {"remove", "nope"}, {"help"},
+	} {
+		if err := run(bad...); err == nil {
+			t.Errorf("%q: want error", bad)
+		}
+	}
+	// Dry-run prints the result and saves nothing.
+	dry := testApp(t, true, false)
+	dry.stdout = &out
+	out.Reset()
+	if err := dry.listCmd([]string{"create", "Home"}); err != nil || !strings.Contains(out.String(), `"name":"Home"`) {
+		t.Fatalf("dry-run: %q, %v", out.String(), err)
+	}
+	if cfg, _ := dry.LoadConfig(); len(cfg.Lists) != 1 {
+		t.Fatalf("dry-run saved: %+v", cfg)
 	}
 }
