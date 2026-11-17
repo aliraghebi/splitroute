@@ -175,6 +175,34 @@ func AddEntries(c Config, name string, lines []string) (Config, EntryEdit, error
 	return c, ed, c.Validate()
 }
 
+// SetEntries replaces a custom list's entries, as AddEntries would add them
+// to an empty list (canonical form, duplicates dropped, one invalid entry
+// fails the edit). "#" notes after the last entry are kept at the end.
+func SetEntries(c Config, name string, lines []string) (Config, EntryEdit, error) {
+	c, i, err := c.custom(name)
+	if err != nil {
+		return c, EntryEdit{}, err
+	}
+	c.Lists[i].Entries = nil
+	c, ed, err := AddEntries(c, name, lines)
+	if err != nil {
+		return c, ed, err
+	}
+	var tail []string
+	for _, l := range slices.Backward(lines) {
+		l = strings.TrimSpace(l)
+		if l == "" {
+			continue
+		}
+		if !strings.HasPrefix(l, "#") {
+			break
+		}
+		tail = append([]string{l}, tail...)
+	}
+	c.Lists[i].Entries = append(c.Lists[i].Entries, tail...)
+	return c, ed, c.Validate()
+}
+
 // RemoveEntries removes entries from a custom list, matched in canonical form
 // (so "Example.COM" removes "example.com"), together with the "#" notes just
 // before them.

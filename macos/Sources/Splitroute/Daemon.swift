@@ -1,6 +1,6 @@
 import Foundation
 
-// Wire types: mirror config.go, api.go and Status in main.go.
+// Wire types: mirror internal/config/config.go, internal/api/api.go and internal/api/status.go.
 
 enum Action: String, Codable, CaseIterable, Identifiable {
     case direct, block, vpn
@@ -137,6 +137,28 @@ private struct Request: Encodable {
     var config: Config?
     var enabled: Bool?
     var preset: String?
+    var name: String?
+    var newName: String?
+    var action: Action?
+    var position: Int?
+    var entries: [String]?
+    var url: String?
+
+    enum CodingKeys: String, CodingKey {
+        case cmd, config, enabled, preset, name, newName = "new_name", action, position, entries, url
+    }
+}
+
+/// Entry counts of an entries_* edit.
+struct EntryEdit: Decodable, Equatable {
+    var added: Int?
+    var duplicates: Int?
+    var removed: Int?
+    var notFound: [String]?
+
+    enum CodingKeys: String, CodingKey {
+        case added, duplicates, removed, notFound = "not_found"
+    }
 }
 
 private struct Response: Decodable {
@@ -146,6 +168,7 @@ private struct Response: Decodable {
     var config: Config?
     var lists: [String]?
     var presets: [Preset]?
+    var edit: EntryEdit?
 }
 
 enum DaemonError: LocalizedError, Equatable {
@@ -164,7 +187,12 @@ enum DaemonError: LocalizedError, Equatable {
 
 /// Client for the daemon's control socket: one JSON request, one JSON response per connection.
 enum Daemon {
+    #if DEBUG
+    /// Debug builds: SPLITROUTE_SOCKET points the app at a fake service.
+    static let socketPath = ProcessInfo.processInfo.environment["SPLITROUTE_SOCKET"] ?? "/var/run/splitroute.sock"
+    #else
     static let socketPath = "/var/run/splitroute.sock"
+    #endif
 
     static func status() async throws -> Status { try await send(Request(cmd: "status")).status! }
     static func config() async throws -> Config { try await send(Request(cmd: "get_config")).config! }
@@ -173,6 +201,19 @@ enum Daemon {
     static func applyPreset(_ id: String) async throws -> Config { try await send(Request(cmd: "apply_preset", preset: id)).config! }
     static func lists() async throws -> [String] { try await send(Request(cmd: "lists")).lists ?? [] }
     static func presets() async throws -> [Preset] { try await send(Request(cmd: "presets")).presets ?? [] }
+
+    /// A per-list edit (list_create, list_enable, list_import, list_remove, list_rename,
+    /// list_set_action, list_move, entries_set): the daemon applies it to its current
+    /// config in one transaction, so edits from the CLI meanwhile are kept.
+    static func edit(_ cmd: String, name: String, newName: String? = nil, action: Action? = nil,
+                     position: Int? = nil, entries: [String]? = nil, url: String? = nil) async throws -> Config {
+        let r = try await send(Request(cmd: cmd, name: name, newName: newName, action: action,
+                                       position: position, entries: entries, url: url))
+        guard let c = r.config else { throw DaemonError.failed("The service is a different version; reinstall it from Settings.") }
+        return c
+    }
+
+    static func refreshImport(_ name: String) async throws { _ = try await send(Request(cmd: "list_refresh", name: name)) }
 
     private static func send(_ req: Request) async throws -> Response {
         let payload = try JSONEncoder().encode(req) + Data("\n".utf8)

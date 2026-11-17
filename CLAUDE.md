@@ -21,7 +21,7 @@ and imports, and a redesigned macOS settings app. Later: our own tunnels and mob
 | `internal/engine/route/` | Route-mode engine: diff (`Changes`), per-OS command builders, apply, remove, presence check |
 | `internal/api/` | Control socket for the menu bar app: one JSON request/response per connection, whole-config and per-list edit commands; `Status` wire type |
 | `internal/fileutil/` | Atomic file write |
-| `macos/` | Swift menu bar app (SwiftPM, macOS 13+): AppKit status item, SwiftUI settings, socket client in `Daemon.swift`. `build-app.sh` bundles the Go binary into `Splitroute.app` and the DMG; `assets/` draws the app icon and DMG background (Swift scripts) and holds the `dmgbuild` layout; `splitroute.rb.in` is the cask |
+| `macos/` | Swift menu bar app (SwiftPM, macOS 13+): AppKit status item, SwiftUI settings (`SettingsView.swift` sidebar, one `*Page.swift` per page, shared rows in `Components.swift`), socket client in `Daemon.swift`. `build-app.sh` bundles the Go binary into `Splitroute.app` and the DMG; `assets/` draws the app icon and DMG background (Swift scripts) and holds the `dmgbuild` layout; `splitroute.rb.in` is the cask |
 
 ## Rules
 
@@ -52,14 +52,15 @@ and imports, and a redesigned macOS settings app. Later: our own tunnels and mob
 - Never overwrite the saved state with an empty one unless routes were really removed.
 - Every bug fix gets a table test; parsers get a fixture copied from real command output.
 - The app never touches routes or the settings database: everything goes through the socket. Wire types in
-  `Daemon.swift` mirror the Go JSON; change both together.
+  `Daemon.swift` mirror the Go JSON; change both together. The app edits with the per-list commands, never
+  `set_config` from a stale copy (that would overwrite CLI edits made meanwhile).
 - English only in code, comments, commits and logs.
 
 ## Verify
 
 ```sh
 gofmt -l . && go vet ./... && GOOS=linux go vet ./... && go test ./...
-(cd macos && swift build)
+(cd macos && swift build)   # UI review: debug build with SPLITROUTE_SOCKET=<fake> --snapshot <dir>
 go run ./cmd/splitroute up --dry-run
 goreleaser check
 ```

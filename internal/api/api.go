@@ -22,6 +22,7 @@
 //	{"cmd": "list_move", "name": "Work", "position": 0}              0-based
 //	{"cmd": "entries_add", "name": "Work", "entries": ["example.com"]}
 //	{"cmd": "entries_remove", "name": "Work", "entries": ["example.com"]}
+//	{"cmd": "entries_set", "name": "Work", "entries": ["example.com"]}           replaces all entries
 //	{"cmd": "list_import", "name": "Ads", "action": "block", "url": "https://…"}   downloaded by the service
 //	{"cmd": "list_refresh", "name": "Ads"}                                         download now → no config
 package api
@@ -76,7 +77,7 @@ type Response struct {
 	Config  *config.Config    `json:"config,omitempty"`
 	Lists   []string          `json:"lists,omitempty"`
 	Presets []config.Preset   `json:"presets,omitempty"`
-	Edit    *config.EntryEdit `json:"edit,omitempty"` // entries_add, entries_remove
+	Edit    *config.EntryEdit `json:"edit,omitempty"` // entries_add, entries_remove, entries_set
 }
 
 const (
@@ -178,7 +179,7 @@ func Respond(b Backend, req Request) Response {
 			return Response{Error: "list_refresh needs a name"}
 		}
 		err = b.RefreshImport(req.Name)
-	case "list_import", "list_create", "list_enable", "list_remove", "list_rename", "list_set_action", "list_move", "entries_add", "entries_remove":
+	case "list_import", "list_create", "list_enable", "list_remove", "list_rename", "list_set_action", "list_move", "entries_add", "entries_remove", "entries_set":
 		var edit func(config.Config) (config.Config, error)
 		if edit, err = listEdit(req, &r); err == nil {
 			r.Config, err = update(b, edit)
@@ -227,10 +228,13 @@ func listEdit(req Request, r *Response) (func(config.Config) (config.Config, err
 			return nil, errors.New("list_move needs a position")
 		}
 		return func(c config.Config) (config.Config, error) { return config.MoveList(c, req.Name, *req.Position) }, nil
-	case "entries_add", "entries_remove":
+	case "entries_add", "entries_remove", "entries_set":
 		op := config.AddEntries
-		if req.Cmd == "entries_remove" {
+		switch req.Cmd {
+		case "entries_remove":
 			op = config.RemoveEntries
+		case "entries_set":
+			op = config.SetEntries
 		}
 		return func(c config.Config) (config.Config, error) {
 			c, ed, err := op(c, req.Name, req.Entries)

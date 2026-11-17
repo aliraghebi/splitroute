@@ -46,8 +46,9 @@ an update, to restart the service on the new version).
 
 - The menu bar icon shows a green dot when routes are active, red when turned off or the service isn't
   running, and orange when something needs attention.
-- **Settings** lists your lists and their actions, adds release lists, creates custom lists of your own
-  addresses, and applies presets. Changes take effect when you click **Apply**.
+- **Settings** has pages for General (on/off, preset, startup), Lists (release lists), My Lists (custom
+  lists and imports from a URL), Status, Advanced (list source, log file, the service) and About. Changes
+  are sent to the service as you make them; if it refuses one, the reason shows under that row.
 - The service runs on its own, so quitting the app doesn't stop routing by itself. While routes are active,
   **Quit** asks whether to turn them off first (**Settings → When quitting while routing** changes the default).
   With **Turn on routing when the app opens**, opening the app turns routing back on, so the app's lifetime
@@ -64,7 +65,7 @@ with `checksums.txt` and build provenance attestations:
 
 ```sh
 gh attestation verify splitroute_*_linux_amd64.tar.gz --repo aliraghebi/splitroute
-go install github.com/aliraghebi/splitroute@latest    # or build it; copy the binary to /usr/local/bin
+go install github.com/aliraghebi/splitroute/cmd/splitroute@latest   # or build it; copy the binary to /usr/local/bin
 ```
 
 ## Use
@@ -182,7 +183,7 @@ The service listens on `/var/run/splitroute.sock` (macOS, group `admin`) or `/ru
 root only): one JSON request per connection, one JSON response. Commands: `status`, `get_config`,
 `set_config`, `set_enabled`, `apply_preset`, `lists`, `presets`, and list edits `list_create`,
 `list_enable`, `list_import`, `list_refresh`, `list_remove`, `list_rename`, `list_set_action`, `list_move`,
-`entries_add`, `entries_remove`
+`entries_add`, `entries_remove`, `entries_set`
 (see `internal/api/api.go`).
 
 ```sh
@@ -212,6 +213,8 @@ gofmt -l . && go vet ./... && go test ./...
 go run ./cmd/splitroute status
 go run ./cmd/splitroute up --dry-run
 macos/build-app.sh          # macos/build/Splitroute.app (needs Xcode)
+# Debug builds: SPLITROUTE_SOCKET=<path> talks to a fake service; --snapshot <dir> renders every
+# settings page (light and dark) to PNGs and quits; --settings opens the settings window.
 ```
 
 ## License

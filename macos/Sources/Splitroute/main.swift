@@ -3,7 +3,7 @@ import Combine
 import SwiftUI
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelegate {
     private let model = AppModel()
     private var item: NSStatusItem!
     private var settingsWindow: NSWindow?
@@ -19,6 +19,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             .sink { [weak self] _, _ in self?.updateIcon() }
             .store(in: &bag)
         updateIcon()
+        // `open -a Splitroute --args --settings` opens the settings window.
+        if CommandLine.arguments.contains("--settings") { openSettings() }
+        #if DEBUG
+        let args = CommandLine.arguments
+        if let i = args.firstIndex(of: "--snapshot"), i + 1 < args.count {
+            openSettings()
+            Task { if let w = settingsWindow { await snapshotSettings(w, to: args[i + 1]) } }
+        }
+        #endif
     }
 
     private func updateIcon() {
@@ -113,17 +122,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func openSettings() {
         if settingsWindow == nil {
             let w = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 620, height: 560),
-                styleMask: [.titled, .closable, .miniaturizable, .resizable],
+                contentRect: NSRect(x: 0, y: 0, width: 780, height: 580),
+                styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                 backing: .buffered, defer: false)
             w.title = "Splitroute Settings"
+            w.titleVisibility = .hidden
+            w.titlebarAppearsTransparent = true
+            // An empty unified toolbar gives the taller title bar of System Settings.
+            w.toolbar = NSToolbar(identifier: "settings")
+            w.toolbarStyle = .unified
             w.isReleasedWhenClosed = false
-            w.contentView = NSHostingView(rootView: SettingsView().environmentObject(model))
+            w.delegate = self
+            w.contentViewController = NSHostingController(rootView: SettingsView().environmentObject(model))
+            w.setContentSize(NSSize(width: 780, height: 580))
             w.center()
+            w.setFrameAutosaveName("Settings")
             settingsWindow = w
         }
+        model.settingsVisible = true
+        Task { await model.loadSettings() }
         NSApp.activate(ignoringOtherApps: true)
         settingsWindow?.makeKeyAndOrderFront(nil)
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        model.settingsVisible = false
     }
 }
 

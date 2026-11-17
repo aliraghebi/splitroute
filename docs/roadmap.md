@@ -94,6 +94,13 @@ Country lists are already CIDR lists in routing-rules (`ir-cidr`); nothing to ad
 Target: the reference screenshot (Raycast settings): sidebar with colored icon tiles, grouped rounded cards,
 each row a title + gray description on the left and the control on the right, section headers between cards.
 
+Status: first pass done. Sidebar window (`SettingsView.swift`, one file per page), `SettingRow` in
+`Components.swift`, edits sent per list over the socket as they are made (no draft/Apply, so CLI edits
+meanwhile are never overwritten; the custom list editor uses `entries_set`). Not yet: back/forward in the
+toolbar and the page title in the title bar (SwiftUI toolbars in an AppKit-hosted window need macOS 14's
+scene bridging), import from a local file (needs the import parser on the daemon side), update check,
+refresh interval (no config key), entry counts per type for release lists (not in `Status`).
+
 ### Structure
 
 - Replace the single `Form` window (`SettingsView.swift`, opened from `main.swift`) with a

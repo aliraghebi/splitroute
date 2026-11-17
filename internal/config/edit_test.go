@@ -124,6 +124,38 @@ func itoa(i int) string {
 	}
 }
 
+func TestSetEntries(t *testing.T) {
+	orig := base()
+	got, ed, err := SetEntries(orig, "Work", []string{"# lab", "198.51.100.9/24", "example.com", "Example.COM", "", "# todo", "  "})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(ed, EntryEdit{Added: 2, Duplicates: 1}) {
+		t.Errorf("edit %+v", ed)
+	}
+	if want := []string{"# lab", "198.51.100.0/24", "example.com", "# todo"}; !reflect.DeepEqual(got.Lists[1].Entries, want) {
+		t.Errorf("entries %q", got.Lists[1].Entries)
+	}
+	if got, _, err := SetEntries(orig, "Work", nil); err != nil || len(got.Lists[1].Entries) != 0 {
+		t.Errorf("clear: %q, %v", got.Lists[1].Entries, err)
+	}
+	for _, bad := range []struct {
+		list  string
+		lines []string
+	}{
+		{"Work", []string{"198.51.100.0/24", "10.0.0.1"}},
+		{"ir-cidr", []string{"198.51.100.0/24"}},
+		{"nope", nil},
+	} {
+		if _, _, err := SetEntries(orig, bad.list, bad.lines); err == nil {
+			t.Errorf("%s %q: want error", bad.list, bad.lines)
+		}
+	}
+	if !reflect.DeepEqual(orig, base()) {
+		t.Fatal("modified its input")
+	}
+}
+
 func TestRemoveEntries(t *testing.T) {
 	orig := base()
 	got, ed, err := RemoveEntries(orig, "Work", []string{"203.0.113.7/32", "EXAMPLE.org", "# ignored"})

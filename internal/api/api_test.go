@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -111,6 +112,10 @@ func TestListEditCommands(t *testing.T) {
 	}
 	if got := m.cfg.Lists[1].Entries; len(got) != 1 || got[0] != "AS13335" {
 		t.Fatalf("stored entries %q", got)
+	}
+	r = Respond(m, Request{Cmd: "entries_set", Name: "Office", Entries: []string{"198.51.100.0/24", "example.org"}})
+	if !r.OK || r.Edit == nil || r.Edit.Added != 2 || !slices.Equal(r.Config.Lists[1].Entries, []string{"198.51.100.0/24", "example.org"}) {
+		t.Fatalf("entries_set: %+v %+v", r, r.Edit)
 	}
 	if r := Respond(m, Request{Cmd: "list_refresh", Name: "Ads"}); !r.OK || len(m.refreshed) != 1 || r.Config != nil {
 		t.Fatalf("list_refresh: %+v %v", r, m.refreshed)
