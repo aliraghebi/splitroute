@@ -12,9 +12,9 @@ and imports, and a redesigned macOS settings app. Later: our own tunnels and mob
 | Path | Role |
 |------|------|
 | `cmd/splitroute/` | CLI and the `app`: wiring, `up`/`down` orchestration (`apply.go`), service loop (`watch.go`), install (`service.go`), status printing, config updates and presets (`config.go`); implements `api.Backend`. Owns `query`/`change`, the only functions that run commands |
-| `internal/rules/` | Pure model: `Action`, entry validation (`ParseEntries`, reserved ranges, /8 floor), `Route`, `Plan` and the route cap |
+| `internal/rules/` | Pure model: `Action`, typed entries (`entry.go`: CIDR, domain, domain suffix, ASN; `ParseEntry` syntax, floors, reserved ranges), `Route`, `Plan` and the route cap |
 | `internal/config/` | Config (JSON, and the 0.1 `list = action` format), `Validate`, load/save, presets |
-| `internal/lists/` | Download, `SHA256SUMS` check, last-good cache, `.list` parsing |
+| `internal/lists/` | Download, `SHA256SUMS` check, last-good cache, `.list` parsing into typed entries |
 | `internal/state/` | Saved state file and the lock around route changes |
 | `internal/platform/` | OS-specific: command runner types, gateway/VPN detection and parsers, route socket (`netwatch_{darwin,linux}.go`), launchd/systemd files |
 | `internal/engine/route/` | Route-mode engine: diff (`Changes`), per-OS command builders, apply, remove, presence check |
@@ -32,8 +32,9 @@ and imports, and a redesigned macOS settings app. Later: our own tunnels and mob
   `platform.ChangeFunc`), never call `exec` themselves.
 - Dependencies point inward: `rules` imports nothing of ours; `cmd/splitroute` is the only place that wires
   packages together. `internal/` packages never import `cmd/`.
-- Never weaken the safety checks: ranges broader than /8 are refused, reserved ranges are skipped, the route
-  count is capped, lists must match `SHA256SUMS`, and `down` removes exactly what `up` added.
+- Never weaken the safety checks: ranges broader than /8 (IPv4) or /16 (IPv6) are refused, reserved ranges
+  are skipped, domains pass `rules.DomainEntry` (they become file names), the route count is capped, lists
+  must match `SHA256SUMS`, and `down` removes exactly what `up` added.
 - The daemon is the only writer of the config at runtime; everything from the socket goes through
   `Config.Validate` (same checks as the file). Socket: root:admin 0660 on macOS, root-only elsewhere.
 - Never overwrite the saved state with an empty one unless routes were really removed.

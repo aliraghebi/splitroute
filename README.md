@@ -97,8 +97,10 @@ Add `--dry-run` to any command to print the route changes instead of making them
 ```
 
 - `direct`: through your normal connection, outside the VPN. `block`: dropped. `vpn`: left alone.
-- A release list is named as in `splitroute lists`. A custom list has any name and your own IPv4 addresses
-  and ranges (domains are not supported yet).
+- A release list is named as in `splitroute lists`. A custom list has any name and your own entries:
+  addresses or ranges (`203.0.113.7`, `198.51.100.0/24`, `2400:cb00::/32`), domains with their subdomains
+  (`example.com`), exact names (`full:www.example.com`) or AS numbers (`AS13335`). Only IPv4 is routed for
+  now; the rest is validated and kept for domain and ASN routing.
 - `"disabled": true` removes the routes but keeps the service running.
 - `"base_url"` overrides the release URL (https only).
 - The 0.1 format (`ir-cidr = direct` lines) is still read; saving from the app or `preset` rewrites it as JSON.

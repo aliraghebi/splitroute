@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/aliraghebi/splitroute/internal/config"
@@ -30,35 +31,61 @@ func (a *app) want() ([]rules.Route, []string, error) {
 	if err != nil || cfg.Disabled {
 		return nil, nil, err
 	}
-	var names []string
+	var names, warn []string
 	byList := map[string][]netip.Prefix{}
 	for _, l := range cfg.Lists {
 		switch {
 		case l.Action == rules.VPN:
 		case l.Custom:
-			if byList[l.Name], err = rules.ParseEntries(l.Entries); err != nil {
+			es, err := rules.ParseEntries(l.Entries)
+			if err != nil {
 				return nil, nil, err // validated on load; unreachable
+			}
+			byList[l.Name] = es.V4
+			if es.Unrouted() != "" && len(es.V4) == 0 {
+				warn = append(warn, fmt.Sprintf("%s has no routable IPv4 ranges (%s)", l.Name, es.Unrouted()))
 			}
 		default:
 			names = append(names, l.Name)
 		}
 	}
-	files, warn, err := lists.Fetch(cfg.ListsURL(), filepath.Join(a.store.Dir, "lists"), names, !a.dry)
+	files, fwarn, err := lists.Fetch(cfg.ListsURL(), filepath.Join(a.store.Dir, "lists"), names, !a.dry)
+	warn = append(warn, fwarn...)
 	if err != nil {
 		return nil, warn, err
 	}
 	for _, n := range names {
-		ps, st, err := lists.Parse(files[n])
+		es, st, err := lists.Parse(files[n])
 		if err != nil {
 			return nil, warn, fmt.Errorf("%s.list: %w", n, err)
 		}
-		if len(ps) == 0 {
-			warn = append(warn, fmt.Sprintf("%s has no routable IPv4 ranges (%d domains, %d IPv6, %d reserved skipped)", n, st.Domains, st.IPv6, st.Reserved))
+		if len(es.V4) == 0 {
+			warn = append(warn, fmt.Sprintf("%s has no routable IPv4 ranges (%s)", n, skipped(es, st)))
 		}
-		byList[n] = ps
+		byList[n] = es.V4
 	}
 	routes, err := rules.Plan(cfg.Uses(), byList)
 	return routes, warn, err
+}
+
+// skipped describes what a release list had besides routable IPv4 ranges.
+func skipped(es rules.Entries, st lists.Stats) string {
+	parts := []string{}
+	if u := es.Unrouted(); u != "" {
+		parts = append(parts, u)
+	}
+	for _, c := range []struct {
+		n    int
+		what string
+	}{{st.Reserved, "reserved"}, {st.Invalid, "invalid domains"}, {st.Other, "other rules"}} {
+		if c.n > 0 {
+			parts = append(parts, fmt.Sprintf("%d %s skipped", c.n, c.what))
+		}
+	}
+	if len(parts) == 0 {
+		return "empty"
+	}
+	return strings.Join(parts, ", ")
 }
 
 func (a *app) gateway() (platform.Gateway, error) { return platform.DetectGateway(a.goos, a.query) }

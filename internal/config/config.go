@@ -18,12 +18,12 @@ import (
 )
 
 // List is one routing-rules release list (by its name without ".list"), or a
-// custom list of the user's own IPv4 addresses and ranges.
+// custom list of the user's own entries (see rules.ParseEntry for the syntax).
 type List struct {
 	Name    string       `json:"name"`
 	Action  rules.Action `json:"action"`
 	Custom  bool         `json:"custom,omitempty"`
-	Entries []string     `json:"entries,omitempty"` // custom lists only: "1.2.3.4" or "1.2.3.0/24"
+	Entries []string     `json:"entries,omitempty"` // custom lists only: "1.2.3.0/24", "example.com", "full:a.example.com", "AS13335"
 }
 
 // Config is the daemon's configuration. Disabled keeps the service running

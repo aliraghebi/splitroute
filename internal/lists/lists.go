@@ -27,13 +27,20 @@ const maxBytes = 64 << 20 // per downloaded file
 // UserAgent is sent with every download; main sets it to include the version.
 var UserAgent = "splitroute/dev"
 
-// Stats counts lines a list had that splitroute can't route.
-type Stats struct{ Domains, IPv6, Reserved int }
+// Stats counts lines a list had that are skipped.
+type Stats struct {
+	Reserved int // private or special ranges, never routed
+	Invalid  int // domains that fail validation
+	Other    int // rule types splitroute doesn't read
+}
 
-// Parse extracts IPv4 ranges from a Shadowrocket-style .list file. A range
-// broader than /8 is an error: it would hijack a large share of all traffic.
-func Parse(b []byte) ([]netip.Prefix, Stats, error) {
-	var out []netip.Prefix
+// Parse reads a Shadowrocket-style .list file: IP-CIDR, IP-CIDR6, DOMAIN and
+// DOMAIN-SUFFIX lines. A range broader than /8 (IPv4) or /16 (IPv6) is an
+// error: it would hijack a large share of all traffic, so the whole list is
+// refused. Reserved ranges, invalid domains and other rule types are skipped
+// and counted.
+func Parse(b []byte) (rules.Entries, Stats, error) {
+	var es rules.Entries
 	var st Stats
 	sc := bufio.NewScanner(bytes.NewReader(b))
 	for sc.Scan() {
@@ -42,31 +49,38 @@ func Parse(b []byte) ([]netip.Prefix, Stats, error) {
 			continue
 		}
 		typ, rest, _ := strings.Cut(line, ",")
-		switch typ {
-		case "IP-CIDR":
-		case "IP-CIDR6":
-			st.IPv6++
-			continue
-		default:
-			st.Domains++
-			continue
-		}
 		val, _, _ := strings.Cut(rest, ",")
-		p, err := netip.ParsePrefix(val)
-		if err != nil || !p.Addr().Is4() {
-			return nil, st, fmt.Errorf("bad IP-CIDR line %q", line)
+		switch typ {
+		case "IP-CIDR", "IP-CIDR6":
+			p, err := netip.ParsePrefix(val)
+			if err != nil || p.Addr().Is4() != (typ == "IP-CIDR") {
+				return rules.Entries{}, st, fmt.Errorf("bad %s line %q", typ, line)
+			}
+			p = p.Masked()
+			if floor := rules.Floor(p.Addr()); p.Bits() < floor {
+				return rules.Entries{}, st, fmt.Errorf("refusing %s: broader than /%d", p, floor)
+			}
+			if rules.IsReserved(p) {
+				st.Reserved++
+				continue
+			}
+			es.Add(rules.Entry{Kind: rules.CIDR, Prefix: p})
+		case "DOMAIN", "DOMAIN-SUFFIX":
+			kind := rules.Domain
+			if typ == "DOMAIN-SUFFIX" {
+				kind = rules.DomainSuffix
+			}
+			e, err := rules.DomainEntry(kind, val)
+			if err != nil {
+				st.Invalid++
+				continue
+			}
+			es.Add(e)
+		default:
+			st.Other++
 		}
-		p = p.Masked()
-		if p.Bits() < rules.MinBits {
-			return nil, st, fmt.Errorf("refusing %s: broader than /%d", p, rules.MinBits)
-		}
-		if rules.IsReserved(p) {
-			st.Reserved++
-			continue
-		}
-		out = append(out, p)
 	}
-	return out, st, sc.Err()
+	return es, st, sc.Err()
 }
 
 // parseSums reads a sha256sum file into file name → hex digest.

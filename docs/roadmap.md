@@ -65,7 +65,11 @@ Policy = ordered [{list, action}]      action: direct | block | vpn
 
 ### Steps
 
-1. **Typed entries + policy order** (config v2, migration, tests).
+1. **Typed entries**: done. `rules.Entry` (cidr, domain, domain_suffix, asn); custom entries stay strings
+   in the config (`example.com`, `full:www.example.com`, `AS13335`, v4/v6 ranges), so no config v2 was
+   needed. Release lists parse all four `.list` line types. Route mode still routes IPv4 only.
+   **Policy order** is split out: a VPN list overriding a direct one means a route via the VPN interface
+   (which changes with the VPN), not just a planning change. Do it with its own design.
 2. **User lists**: any entry type, created from the CLI and the app. Stored as files in the daemon's data
    dir once they grow; the config keeps the reference.
 3. **ASN**: routing-rules publishes per-ASN CIDR lists at build time from public BGP data (separate repo

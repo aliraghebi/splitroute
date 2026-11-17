@@ -3,7 +3,6 @@
 package rules
 
 import (
-	"fmt"
 	"net/netip"
 	"strings"
 )
@@ -36,7 +35,11 @@ var reserved = []netip.Prefix{
 
 // IsReserved reports whether p overlaps a range that is never routed.
 func IsReserved(p netip.Prefix) bool {
-	for _, r := range reserved {
+	list := reserved
+	if p.Addr().Is6() {
+		list = reserved6
+	}
+	for _, r := range list {
 		if r.Overlaps(p) {
 			return true
 		}
@@ -44,37 +47,21 @@ func IsReserved(p netip.Prefix) bool {
 	return false
 }
 
-// ParseEntries turns a custom list's entries into prefixes. Unlike release
-// lists, a reserved range is an error here: the user typed it and should know
-// it has no effect.
-func ParseEntries(entries []string) ([]netip.Prefix, error) {
-	var out []netip.Prefix
-	for _, e := range entries {
-		e = strings.TrimSpace(e)
-		if e == "" || strings.HasPrefix(e, "#") {
+// ParseEntries parses a custom list's entries. Blank lines and "#" notes are
+// skipped. Unlike release lists, a reserved range is an error here: the user
+// typed it and should know it has no effect.
+func ParseEntries(lines []string) (Entries, error) {
+	var es Entries
+	for _, l := range lines {
+		l = strings.TrimSpace(l)
+		if l == "" || strings.HasPrefix(l, "#") {
 			continue
 		}
-		var p netip.Prefix
-		var err error
-		if strings.Contains(e, "/") {
-			p, err = netip.ParsePrefix(e)
-		} else {
-			var a netip.Addr
-			if a, err = netip.ParseAddr(e); err == nil {
-				p = netip.PrefixFrom(a, a.BitLen())
-			}
+		e, err := ParseEntry(l)
+		if err != nil {
+			return Entries{}, err
 		}
-		switch {
-		case err != nil:
-			return nil, fmt.Errorf("%q is not an IP address or range (domains are not supported yet)", e)
-		case !p.Addr().Is4():
-			return nil, fmt.Errorf("%q: only IPv4 is supported", e)
-		case p.Bits() < MinBits:
-			return nil, fmt.Errorf("%q is broader than /%d", e, MinBits)
-		case IsReserved(p.Masked()):
-			return nil, fmt.Errorf("%q is a private or special range and is never routed", e)
-		}
-		out = append(out, p.Masked())
+		es.Add(e)
 	}
-	return out, nil
+	return es, nil
 }

@@ -47,13 +47,20 @@ func TestRespondConfig(t *testing.T) {
 
 func TestWantDisabledAndCustom(t *testing.T) {
 	a := newApp("linux", filepath.Join(t.TempDir(), "splitroute.conf"), true)
-	custom := config.Config{Lists: []config.List{{Name: "Work", Custom: true, Action: rules.Block, Entries: []string{"203.0.113.7"}}}}
+	custom := config.Config{Lists: []config.List{
+		{Name: "Work", Custom: true, Action: rules.Block, Entries: []string{"203.0.113.7", "example.com", "2400:cb00::/32"}},
+		{Name: "Sites", Custom: true, Action: rules.Direct, Entries: []string{"example.org", "AS13335"}},
+	}}
 	if err := config.Save(a.cfgPath, custom); err != nil {
 		t.Fatal(err)
 	}
-	got, _, err := a.want() // no release lists: no network
+	got, warn, err := a.want() // no release lists: no network
 	if err != nil || !reflect.DeepEqual(got, []rules.Route{{Prefix: netip.MustParsePrefix("203.0.113.7/32"), Action: rules.Block, List: "Work"}}) {
 		t.Fatalf("got %v, %v", got, err)
+	}
+	// Only IPv4 is routed; a list with nothing routable says so.
+	if !reflect.DeepEqual(warn, []string{"Sites has no routable IPv4 ranges (1 domains, 1 AS numbers)"}) {
+		t.Fatalf("warnings %q", warn)
 	}
 	custom.Disabled = true
 	if err := config.Save(a.cfgPath, custom); err != nil {

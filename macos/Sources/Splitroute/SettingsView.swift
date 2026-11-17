@@ -142,7 +142,7 @@ struct SettingsView: View {
         } header: {
             Text("Lists")
         } footer: {
-            Text("Direct: through your normal connection, outside the VPN. Block: dropped. VPN: left alone. Only IPv4 ranges are routed; domain-only lists (ads, nsfw) have no effect.")
+            Text("Direct: through your normal connection, outside the VPN. Block: dropped. VPN: left alone. Only IPv4 ranges are routed for now; domain-only lists (ads, nsfw) have no effect yet.")
                 .font(.caption).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -266,7 +266,7 @@ struct CustomListEditor: View {
                     ForEach(Action.allCases) { Text($0.label).tag($0) }
                 }
             }
-            Text("IPv4 addresses or ranges, one per line (for example 203.0.113.7 or 198.51.100.0/24). Lines starting with # are notes.")
+            Text("One per line: an IP address or range (203.0.113.7, 198.51.100.0/24, 2400:cb00::/32), a domain with its subdomains (example.com), one exact name (full:www.example.com) or an AS number (AS13335). Lines starting with # are notes. Only IPv4 is routed for now; the rest is saved for upcoming domain and ASN routing.")
                 .font(.caption).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             TextEditor(text: $text)
