@@ -26,19 +26,22 @@ so near-term choices don't block them.
 Split the flat `package main` so the core can be imported later (TUN backend, `gomobile bind`):
 
 ```
-cmd/splitroute/      CLI and wiring (today's main.go)
-internal/config/     Config, validation, migration from older formats
-internal/rules/      entry types, validation, matching, planning (pure)
-internal/lists/      download, SHA256SUMS, cache, parsers per format
-internal/state/      state file and lock
-internal/api/        socket server and wire types
-internal/platform/   gateway/VPN detection, netwatch, service install (per OS)
-engine/route/        route plan, diff, command builders, apply (today's routes.go + apply.go)
+cmd/splitroute/          CLI, wiring, up/down orchestration, watch loop
+internal/config/         Config, validation, presets, migration from older formats
+internal/rules/          entry types, validation, matching, planning (pure)
+internal/lists/          download, SHA256SUMS, cache, parsers per format
+internal/state/          state file and lock
+internal/api/            socket server and wire types
+internal/platform/       command runners, gateway/VPN detection, netwatch, service files (per OS)
+internal/engine/route/   route diff, command builders, apply, presence check
 ```
 
+Status: done (branch `refactor/packages`). The engine sits under `internal/` too: no public Go API until
+something outside this module needs one.
+
 - Same tests pass; `up --dry-run` output byte-identical before and after (diff it).
-- `app.query` / `app.change` stay the only place commands run; pass them as an interface into
-  `engine/route` and `internal/platform`.
+- `app.query` / `app.change` stay the only place commands run; passed as `platform.QueryFunc` /
+  `platform.ChangeFunc` into `internal/engine/route` and `internal/platform`.
 - One PR, moves only. No renames of JSON fields, files on disk or socket commands.
 
 ## 2. Routing features
@@ -76,7 +79,7 @@ Policy = ordered [{list, action}]      action: direct | block | vpn
    copy on a failed refresh.
 5. **Domains**: `docs/domain-routing-plan.md`. Run its step 1 prototype first (resolver files at 5k scale);
    it decides whether block lists use the same mechanism. Keep the domain matcher in `internal/rules` and the
-   `/etc/resolver` code in `engine/route`, so a later TUN engine can reuse the matcher.
+   `/etc/resolver` code in `internal/engine/route`, so a later TUN engine can reuse the matcher.
 
 Country lists are already CIDR lists in routing-rules (`ir-cidr`); nothing to add for them.
 

@@ -1,4 +1,4 @@
-package main
+package platform
 
 import (
 	"os"
@@ -12,9 +12,9 @@ const (
 	rtmgrpIPv4Route  = 0x40
 )
 
-// routeSocket opens an rtnetlink socket subscribed to link, IPv4 address and
+// RouteSocket opens an rtnetlink socket subscribed to link, IPv4 address and
 // IPv4 route changes.
-func routeSocket() (*os.File, error) {
+func RouteSocket() (*os.File, error) {
 	fd, err := syscall.Socket(syscall.AF_NETLINK, syscall.SOCK_RAW, syscall.NETLINK_ROUTE)
 	if err != nil {
 		return nil, err
@@ -30,6 +30,6 @@ func routeSocket() (*os.File, error) {
 	return os.NewFile(uintptr(fd), "netlink"), nil
 }
 
-// relevant: the subscribed groups carry no neighbor (ARP) traffic, so every
+// Relevant: the subscribed groups carry no neighbor (ARP) traffic, so every
 // message is a link, address or route change.
-func relevant([]byte) bool { return true }
+func Relevant([]byte) bool { return true }

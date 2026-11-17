@@ -18,7 +18,7 @@ swift assets/icon.swift "$APP/Contents/Resources/AppIcon.icns"
 
 for arch in arm64 amd64; do
   (cd .. && CGO_ENABLED=0 GOOS=darwin GOARCH=$arch go build -trimpath \
-    -ldflags "-s -w -X main.version=$VERSION" -o "macos/build/splitroute-$arch" .)
+    -ldflags "-s -w -X main.version=$VERSION" -o "macos/build/splitroute-$arch" ./cmd/splitroute)
 done
 lipo -create build/splitroute-arm64 build/splitroute-amd64 -output "$APP/Contents/Resources/splitroute"
 rm build/splitroute-arm64 build/splitroute-amd64

@@ -1,6 +1,6 @@
-//go:build darwin || linux
-
-package main
+// Package lists downloads routing-rules release lists, checks them against
+// SHA256SUMS, keeps a last-good cache and parses them.
+package lists
 
 import (
 	"bufio"
@@ -17,35 +17,24 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/aliraghebi/splitroute/internal/fileutil"
+	"github.com/aliraghebi/splitroute/internal/rules"
 )
 
-const (
-	minBits  = 8        // never route anything broader than a /8
-	maxBytes = 64 << 20 // per downloaded file
-)
+const maxBytes = 64 << 20 // per downloaded file
 
-// reserved ranges are never routed: touching them can cut off the LAN, loopback
-// or the VPN's own addresses.
-var reserved = []netip.Prefix{
-	netip.MustParsePrefix("0.0.0.0/8"),
-	netip.MustParsePrefix("10.0.0.0/8"),
-	netip.MustParsePrefix("100.64.0.0/10"),
-	netip.MustParsePrefix("127.0.0.0/8"),
-	netip.MustParsePrefix("169.254.0.0/16"),
-	netip.MustParsePrefix("172.16.0.0/12"),
-	netip.MustParsePrefix("192.168.0.0/16"),
-	netip.MustParsePrefix("198.18.0.0/15"),
-	netip.MustParsePrefix("224.0.0.0/3"),
-}
+// UserAgent is sent with every download; main sets it to include the version.
+var UserAgent = "splitroute/dev"
 
-// listStats counts lines a list had that splitroute can't route.
-type listStats struct{ domains, ipv6, reserved int }
+// Stats counts lines a list had that splitroute can't route.
+type Stats struct{ Domains, IPv6, Reserved int }
 
-// parseList extracts IPv4 ranges from a Shadowrocket-style .list file. A range
+// Parse extracts IPv4 ranges from a Shadowrocket-style .list file. A range
 // broader than /8 is an error: it would hijack a large share of all traffic.
-func parseList(b []byte) ([]netip.Prefix, listStats, error) {
+func Parse(b []byte) ([]netip.Prefix, Stats, error) {
 	var out []netip.Prefix
-	var st listStats
+	var st Stats
 	sc := bufio.NewScanner(bytes.NewReader(b))
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
@@ -56,10 +45,10 @@ func parseList(b []byte) ([]netip.Prefix, listStats, error) {
 		switch typ {
 		case "IP-CIDR":
 		case "IP-CIDR6":
-			st.ipv6++
+			st.IPv6++
 			continue
 		default:
-			st.domains++
+			st.Domains++
 			continue
 		}
 		val, _, _ := strings.Cut(rest, ",")
@@ -68,25 +57,16 @@ func parseList(b []byte) ([]netip.Prefix, listStats, error) {
 			return nil, st, fmt.Errorf("bad IP-CIDR line %q", line)
 		}
 		p = p.Masked()
-		if p.Bits() < minBits {
-			return nil, st, fmt.Errorf("refusing %s: broader than /%d", p, minBits)
+		if p.Bits() < rules.MinBits {
+			return nil, st, fmt.Errorf("refusing %s: broader than /%d", p, rules.MinBits)
 		}
-		if isReserved(p) {
-			st.reserved++
+		if rules.IsReserved(p) {
+			st.Reserved++
 			continue
 		}
 		out = append(out, p)
 	}
 	return out, st, sc.Err()
-}
-
-func isReserved(p netip.Prefix) bool {
-	for _, r := range reserved {
-		if r.Overlaps(p) {
-			return true
-		}
-	}
-	return false
 }
 
 // parseSums reads a sha256sum file into file name → hex digest.
@@ -108,7 +88,7 @@ func httpGet(url string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", "splitroute/"+version)
+	req.Header.Set("User-Agent", UserAgent)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
@@ -120,10 +100,10 @@ func httpGet(url string) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(resp.Body, maxBytes))
 }
 
-// fetchLists downloads each named list and checks it against the release's
+// Fetch downloads each named list and checks it against the release's
 // SHA256SUMS. A list that can't be downloaded or verified falls back to the
 // last verified copy in cacheDir, so a network hiccup never drops routes.
-func fetchLists(base, cacheDir string, names []string, save bool) (map[string][]byte, []string, error) {
+func Fetch(base, cacheDir string, names []string, save bool) (map[string][]byte, []string, error) {
 	var warn []string
 	var sums map[string]string
 	if b, err := httpGet(base + "/SHA256SUMS"); err != nil {
@@ -147,7 +127,7 @@ func fetchLists(base, cacheDir string, names []string, save bool) (map[string][]
 		} else {
 			out[n] = b
 			if save {
-				if werr := writeFileAtomic(cached, b); werr != nil {
+				if werr := fileutil.WriteAtomic(cached, b); werr != nil {
 					warn = append(warn, fmt.Sprintf("cache %s: %v", file, werr))
 				}
 			}
@@ -163,36 +143,9 @@ func fetchLists(base, cacheDir string, names []string, save bool) (map[string][]
 	return out, warn, nil
 }
 
-func writeFileAtomic(path string, b []byte) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
-}
-
-func (a *app) lists() error {
-	names, err := a.availableLists()
-	if err != nil {
-		return err
-	}
-	fmt.Println("Lists (only their IPv4 ranges are routed; domain-only lists have no effect):")
-	for _, n := range names {
-		fmt.Println("  " + n)
-	}
-	return nil
-}
-
-// availableLists returns the list names in the latest release.
-func (a *app) availableLists() ([]string, error) {
-	cfg, err := loadConfig(a.cfgPath)
-	if err != nil {
-		return nil, err
-	}
-	b, err := httpGet(cfg.baseURL() + "/SHA256SUMS")
+// Available returns the list names in the release at base.
+func Available(base string) ([]string, error) {
+	b, err := httpGet(base + "/SHA256SUMS")
 	if err != nil {
 		return nil, err
 	}

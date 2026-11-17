@@ -78,19 +78,19 @@ Measure on macOS 13 and 26+:
 
 ## Step 2: implementation
 
-Keep the CLAUDE.md rules: pure logic tested on any OS, only `app.query`/`app.change` change the
+Keep the CLAUDE.md rules: pure logic tested on any OS, only `app.query`/`app.change` (passed into packages) change the
 system, `down` removes exactly what `up` added, route cap, never write an empty state over a real one.
 
-- **DNS parsing (`dns.go`, pure):** parse and build with `golang.org/x/net/dns/dnsmessage` (header,
+- **DNS parsing (`internal/dns`, pure):** parse and build with `golang.org/x/net/dns/dnsmessage` (header,
   question, A/AAAA/CNAME answers, NXDOMAIN and SERVFAIL replies, TTLs). Tests use fixtures captured from
   real `dig` traffic.
-- **Lists (`lists.go`):** keep domain entries instead of dropping them; validate (no wildcards beyond the
+- **Lists (`internal/lists`, `internal/rules`):** keep domain entries instead of dropping them; validate (no wildcards beyond the
   domain-suffix meaning, length limits, lowercase, punycode only). Cap domains per list like routes.
-- **Plan (`routes.go`, pure):** `planDomains(cfg, lists) -> map[domain]Action`, block beats direct like IPs.
+- **Plan (`internal/rules`, pure):** `planDomains(cfg, lists) -> map[domain]Action`, block beats direct like IPs.
   Diff of resolver files to write/remove, like `changes`.
-- **Resolver files (`resolver.go`):** write `/etc/resolver/<domain>` with a marker comment
+- **Resolver files (`internal/engine/route/resolver.go`):** write `/etc/resolver/<domain>` with a marker comment
   (`# managed by splitroute`); only ever remove files carrying the marker. Record written files in the state.
-- **DNS server (`dnsserver.go`):** UDP (and TCP for truncated answers) on 127.0.0.1:5300 in the `watch`
+- **DNS server (`internal/dns/server.go`):** UDP (and TCP for truncated answers) on 127.0.0.1:5300 in the `watch`
   loop. Upstream = physical interface DNS (from `scutil --dns` / `ipconfig getpacket`), with a /32 route
   to it via the gateway. Timeouts; never block the answer longer than ~2s.
 - **Dynamic routes:** add before replying; track `ip -> {list, expiry}` in memory and in the state file so

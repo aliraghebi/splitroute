@@ -2,7 +2,8 @@ version: 2
 project_name: splitroute
 
 builds:
-  - env: [CGO_ENABLED=0]
+  - main: ./cmd/splitroute
+    env: [CGO_ENABLED=0]
     goos: [darwin, linux]
     goarch: [amd64, arm64]
     flags: [-trimpath]

@@ -122,7 +122,7 @@ sudo splitroute preset iran  # replace the release lists with the preset's; cust
 
 The service listens on `/var/run/splitroute.sock` (macOS, group `admin`) or `/run/splitroute.sock` (Linux,
 root only): one JSON request per connection, one JSON response. Commands: `status`, `get_config`,
-`set_config`, `set_enabled`, `apply_preset`, `lists`, `presets` (see `api.go`).
+`set_config`, `set_enabled`, `apply_preset`, `lists`, `presets` (see `internal/api/api.go`).
 
 ```sh
 echo '{"cmd":"status"}' | nc -U /var/run/splitroute.sock
@@ -148,8 +148,8 @@ echo '{"cmd":"status"}' | nc -U /var/run/splitroute.sock
 
 ```sh
 gofmt -l . && go vet ./... && go test ./...
-go run . status
-go run . up --dry-run
+go run ./cmd/splitroute status
+go run ./cmd/splitroute up --dry-run
 macos/build-app.sh          # macos/build/Splitroute.app (needs Xcode)
 ```
 

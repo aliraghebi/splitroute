@@ -12,11 +12,15 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
 	"runtime"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/aliraghebi/splitroute/internal/engine/route"
+	"github.com/aliraghebi/splitroute/internal/lists"
+	"github.com/aliraghebi/splitroute/internal/platform"
+	"github.com/aliraghebi/splitroute/internal/state"
 )
 
 var version = "dev"
@@ -52,11 +56,11 @@ const (
 	checkEvery   = 15 * time.Second
 	settleDelay  = time.Second // after the last network event, before checking
 	refreshEvery = 24 * time.Hour
-	serviceLabel = "io.github.aliraghebi.splitroute"
 )
 
 func main() {
 	log.SetFlags(0)
+	lists.UserAgent = "splitroute/" + version
 	fs := flag.NewFlagSet("splitroute", flag.ExitOnError)
 	cfgPath := fs.String("config", "/etc/splitroute.conf", "config file")
 	dry := fs.Bool("dry-run", false, "print route changes instead of making them")
@@ -86,14 +90,16 @@ func main() {
 }
 
 // app holds everything a command needs. query always runs (it only reads
-// system state); change is replaced by a printer in dry-run mode.
+// system state); change is replaced by a printer in dry-run mode. They are the
+// only way anything here touches the system.
 type app struct {
-	goos     string
-	cfgPath  string
-	stateDir string
-	dry      bool
-	query    func(name string, args ...string) (string, error)
-	change   func(name string, args []string, stdin string) error
+	goos    string
+	cfgPath string
+	dry     bool
+	query   platform.QueryFunc
+	change  platform.ChangeFunc
+	store   state.Store
+	routes  route.Engine
 
 	cfgMu   sync.Mutex    // serializes config read-modify-write
 	reload  chan struct{} // set by watch: asks it to re-apply now
@@ -102,10 +108,8 @@ type app struct {
 }
 
 func newApp(goos, cfgPath string, dry bool) *app {
-	a := &app{goos: goos, cfgPath: cfgPath, dry: dry, stateDir: "/var/lib/splitroute", query: execQuery, change: execChange}
-	if goos == "darwin" {
-		a.stateDir = "/var/db/splitroute"
-	}
+	a := &app{goos: goos, cfgPath: cfgPath, dry: dry, query: platform.ExecQuery, change: platform.ExecChange}
+	a.store = state.Store{Dir: state.DefaultDir(goos), Dry: dry}
 	if dry {
 		a.change = func(name string, args []string, stdin string) error {
 			fmt.Println(name, strings.Join(args, " "))
@@ -115,21 +119,8 @@ func newApp(goos, cfgPath string, dry bool) *app {
 			return nil
 		}
 	}
+	a.routes = route.Engine{GOOS: goos, Query: a.query, Change: a.change}
 	return a
-}
-
-func execQuery(name string, args ...string) (string, error) {
-	out, err := exec.Command(name, args...).Output()
-	return string(out), err
-}
-
-func execChange(name string, args []string, stdin string) error {
-	c := exec.Command(name, args...)
-	c.Stdin = strings.NewReader(stdin)
-	if out, err := c.CombinedOutput(); err != nil {
-		return fmt.Errorf("%s %s: %v: %s", name, strings.Join(args, " "), err, strings.TrimSpace(string(out)))
-	}
-	return nil
 }
 
 func (a *app) do(cmd string, args []string) error {
@@ -139,17 +130,17 @@ func (a *app) do(cmd string, args []string) error {
 	}
 	switch cmd {
 	case "up":
-		return a.withLock(func() error { _, err := a.up(false); return err })
+		return a.store.WithLock(func() error { _, err := a.up(false); return err })
 	case "down":
-		return a.withLock(a.down)
+		return a.store.WithLock(a.down)
 	case "status":
-		return a.status()
+		return a.printStatus()
 	case "watch":
-		return a.withLock(a.watch)
+		return a.store.WithLock(a.watch)
 	case "lists":
-		return a.lists()
+		return a.printLists()
 	case "preset":
-		return a.preset(args)
+		return a.runPreset(args)
 	case "install":
 		return a.install()
 	case "uninstall":

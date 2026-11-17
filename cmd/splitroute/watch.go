@@ -12,6 +12,10 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+
+	"github.com/aliraghebi/splitroute/internal/api"
+	"github.com/aliraghebi/splitroute/internal/platform"
+	"github.com/aliraghebi/splitroute/internal/state"
 )
 
 // watch applies the routes, then re-applies them when the config changes
@@ -23,13 +27,13 @@ func (a *app) watch() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	a.reload = make(chan struct{}, 1)
-	if ln, err := a.listen(); err != nil {
+	if ln, err := api.Listen(a.goos); err != nil {
 		log.Printf("warning: control socket: %v (the menu bar app can't connect)", err)
 	} else {
 		defer ln.Close()
-		go a.serve(ln)
+		go api.Serve(ln, a)
 	}
-	var st State
+	var st state.State
 	var cfgMod time.Time
 	refresh := func() {
 		cfgMod = modTime(a.cfgPath)
@@ -46,7 +50,7 @@ func (a *app) watch() error {
 	t := time.NewTicker(checkEvery)
 	defer t.Stop()
 	var netCh <-chan struct{} // nil (never ready) if the route socket is unavailable
-	if f, err := routeSocket(); err != nil {
+	if f, err := platform.RouteSocket(); err != nil {
 		log.Printf("warning: route socket: %v (checking every %s only)", err, checkEvery)
 	} else {
 		netCh = netEvents(f)
@@ -82,8 +86,8 @@ func (a *app) watch() error {
 		if err != nil {
 			continue // offline: keep routes until a gateway is back
 		}
-		if gw != st.Gateway || !a.present(st) {
-			next := State{Gateway: gw, Routes: st.Routes, Fetched: st.Fetched, Warnings: st.Warnings}
+		if gw != st.Gateway || !a.routes.Present(st.Routes, st.Gateway) {
+			next := state.State{Gateway: gw, Routes: st.Routes, Fetched: st.Fetched, Warnings: st.Warnings}
 			err := a.applyAndSave(st, next, gw == st.Gateway)
 			a.setLastErr(err)
 			if err != nil {
@@ -109,7 +113,7 @@ func netEvents(f *os.File) <-chan struct{} {
 				log.Printf("warning: route socket: %v (checking every %s only)", err, checkEvery)
 				return
 			}
-			if err == nil && !relevant(buf[:n]) {
+			if err == nil && !platform.Relevant(buf[:n]) {
 				continue
 			}
 			select {
