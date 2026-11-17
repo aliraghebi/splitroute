@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log"
 	"net/netip"
 	"os"
 	"regexp"
@@ -231,4 +232,55 @@ func withPreset(cfg Config, id string) (Config, error) {
 		return cfg, cfg.validate()
 	}
 	return cfg, fmt.Errorf("unknown preset %q", id)
+}
+
+func (a *app) preset(args []string) error {
+	if len(args) == 0 {
+		for _, p := range presets {
+			fmt.Printf("%-10s %s\n", p.ID, p.Name)
+			for _, l := range p.Lists {
+				fmt.Printf("           %-6s %s\n", l.Action, l.Name)
+			}
+		}
+		return nil
+	}
+	if a.dry {
+		cfg, err := loadConfig(a.cfgPath)
+		if err == nil {
+			cfg, err = withPreset(cfg, args[0])
+		}
+		if err == nil {
+			err = json.NewEncoder(os.Stdout).Encode(cfg)
+		}
+		return err
+	}
+	if _, err := a.updateConfig(func(c Config) (Config, error) { return withPreset(c, args[0]) }); err != nil {
+		return err
+	}
+	log.Printf("preset %s saved to %s; the service applies it within %s (or run `sudo splitroute up`)", args[0], a.cfgPath, checkEvery)
+	return nil
+}
+
+// updateConfig loads the config, changes it with f, saves it and asks the
+// service (if this process is it) to apply it now.
+func (a *app) updateConfig(f func(Config) (Config, error)) (Config, error) {
+	a.cfgMu.Lock()
+	defer a.cfgMu.Unlock()
+	cfg, err := loadConfig(a.cfgPath)
+	if err != nil {
+		return Config{}, err
+	}
+	if cfg, err = f(cfg); err != nil {
+		return Config{}, err
+	}
+	if err := saveConfig(a.cfgPath, cfg); err != nil {
+		return Config{}, err
+	}
+	if a.reload != nil {
+		select {
+		case a.reload <- struct{}{}:
+		default: // a reload is already pending
+		}
+	}
+	return cfg, nil
 }

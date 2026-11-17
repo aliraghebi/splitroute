@@ -14,6 +14,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 )
@@ -171,4 +172,36 @@ func writeFileAtomic(path string, b []byte) error {
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+func (a *app) lists() error {
+	names, err := a.availableLists()
+	if err != nil {
+		return err
+	}
+	fmt.Println("Lists (only their IPv4 ranges are routed; domain-only lists have no effect):")
+	for _, n := range names {
+		fmt.Println("  " + n)
+	}
+	return nil
+}
+
+// availableLists returns the list names in the latest release.
+func (a *app) availableLists() ([]string, error) {
+	cfg, err := loadConfig(a.cfgPath)
+	if err != nil {
+		return nil, err
+	}
+	b, err := httpGet(cfg.baseURL() + "/SHA256SUMS")
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for f := range parseSums(b) {
+		if n, ok := strings.CutSuffix(f, ".list"); ok {
+			names = append(names, n)
+		}
+	}
+	slices.Sort(names)
+	return names, nil
 }

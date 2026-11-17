@@ -8,10 +8,17 @@ next to a VPN. It runs as root, so correctness and safety beat features.
 
 | File | Role |
 |------|------|
-| `main.go` | CLI, app wiring, state file and lock, gateway/VPN detection, apply, `watch` loop, service install |
+| `main.go` | CLI, `app` wiring, the only place commands run (`query`/`change`) |
+| `state.go` | Saved state file and the lock around route changes |
+| `gateway.go` | Physical gateway and VPN interface detection |
+| `apply.go` | `up`/`down`: plan, apply, save, presence check |
+| `watch.go` | Service loop: daily refresh, config reload, network events, reapply |
+| `netwatch_{darwin,linux}.go` | Route socket (`PF_ROUTE` / rtnetlink) and the event filter |
+| `status.go` | Status report for `status` and the socket |
+| `service.go` | launchd/systemd install and uninstall |
 | `config.go` | Config (JSON, and the 0.1 `list = action` format), validation, custom list entries, presets |
 | `api.go` | Control socket for the menu bar app: one JSON request/response per connection |
-| `lists.go` | Download, `SHA256SUMS` check, last-good cache, `.list` parsing and range validation |
+| `lists.go` | Download, `SHA256SUMS` check, last-good cache, `.list` parsing and range validation, `lists` command |
 | `macos/` | Swift menu bar app (SwiftPM, macOS 13+): AppKit status item, SwiftUI settings, socket client in `Daemon.swift`. `build-app.sh` bundles the Go binary into `Splitroute.app`; `splitroute.rb.in` is the cask |
 | `routes.go` | Pure logic: plan, diff (`changes`), per-OS command builders, output parsers |
 
