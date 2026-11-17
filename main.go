@@ -59,6 +59,7 @@ Flags:
 
 const (
 	checkEvery   = 15 * time.Second
+	settleDelay  = time.Second // after the last network event, before checking
 	refreshEvery = 24 * time.Hour
 	serviceLabel = "io.github.aliraghebi.splitroute"
 )
@@ -465,6 +466,13 @@ func (a *app) watch() error {
 	refresh()
 	t := time.NewTicker(checkEvery)
 	defer t.Stop()
+	var netCh <-chan struct{} // nil (never ready) if the route socket is unavailable
+	if f, err := routeSocket(); err != nil {
+		log.Printf("warning: route socket: %v (checking every %s only)", err, checkEvery)
+	} else {
+		netCh = netEvents(f)
+	}
+	var settle <-chan time.Time
 	for {
 		select {
 		case <-ctx.Done():
@@ -472,6 +480,16 @@ func (a *app) watch() error {
 		case <-a.reload:
 			refresh()
 			continue
+		case <-netCh:
+			// Check a second after the first event of a burst (a network switch
+			// is many messages). Not reset by later events, so steady route churn
+			// from other software can't postpone the check forever.
+			if settle == nil {
+				settle = time.After(settleDelay)
+			}
+			continue
+		case <-settle:
+			settle = nil
 		case <-t.C:
 		}
 		if time.Since(st.Fetched) > refreshEvery || !modTime(a.cfgPath).Equal(cfgMod) {
@@ -498,6 +516,32 @@ func (a *app) watch() error {
 }
 
 // modTime is the file's modification time, or zero if it can't be read.
+// netEvents signals when a relevant message is read from f (a route socket),
+// coalescing bursts into one pending signal. A signal only triggers the same
+// gateway and presence check as the ticker, which is a no-op when nothing that
+// matters changed (including after our own route changes).
+func netEvents(f *os.File) <-chan struct{} {
+	ch := make(chan struct{}, 1)
+	go func() {
+		buf := make([]byte, 1<<16)
+		for {
+			n, err := f.Read(buf)
+			if err != nil && !errors.Is(err, syscall.ENOBUFS) { // ENOBUFS: messages dropped, treat as a change
+				log.Printf("warning: route socket: %v (checking every %s only)", err, checkEvery)
+				return
+			}
+			if err == nil && !relevant(buf[:n]) {
+				continue
+			}
+			select {
+			case ch <- struct{}{}:
+			default:
+			}
+		}
+	}()
+	return ch
+}
+
 func modTime(path string) time.Time {
 	fi, err := os.Stat(path)
 	if err != nil {
