@@ -11,18 +11,19 @@ struct SettingsView: View {
     private var dirty: Bool { model.config.map { $0 != draft } ?? false }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            header
+        Form {
+            statusSection
             if model.config == nil {
-                notRunning
+                notRunningSection
             } else {
-                presetBox
-                listsBox
-                footer
+                presetSection
+                listsSection
+                generalSection
             }
         }
-        .padding(20)
-        .frame(minWidth: 560, minHeight: 480, alignment: .topLeading)
+        .formStyle(.grouped)
+        .applyBar(visible: model.config != nil) { applyBar }
+        .frame(minWidth: 560, minHeight: 480)
         .task { await model.loadSettings() }
         .onReceive(model.$config) { if let c = $0 { draft = c } }
         .sheet(item: $editor) { target in
@@ -38,73 +39,74 @@ struct SettingsView: View {
 
     // MARK: Sections
 
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 4) {
+    private var statusSection: some View {
+        Section {
             HStack {
                 Circle().fill(dotColor).frame(width: 10, height: 10)
-                Text(model.summary).font(.headline)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(model.summary).font(.headline)
+                    if let line = model.networkLine {
+                        Text(line).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
                 Spacer()
                 if model.status != nil {
                     Toggle("Enabled", isOn: Binding(
                         get: { model.status?.enabled ?? false },
                         set: { on in Task { await model.setEnabled(on) } }
                     ))
+                    .labelsHidden()
                     .toggleStyle(.switch)
                     .disabled(model.busy)
                 }
             }
-            if let line = model.networkLine {
-                Text(line).font(.caption).foregroundStyle(.secondary)
-            }
             if model.serviceOutdated, let v = model.status?.version {
                 HStack {
                     Label("The service is version \(v); this app is \(AppModel.appVersion).", systemImage: "arrow.triangle.2.circlepath")
-                        .font(.caption)
+                    Spacer()
                     Button("Update Service") { Task { await model.installService() } }
-                        .controlSize(.small)
                         .disabled(model.busy)
                 }
             }
             ForEach(model.status?.warnings ?? [], id: \.self) { w in
-                Label(w, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange)
+                Label(w, systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
             }
         }
     }
 
-    private var notRunning: some View {
-        VStack(alignment: .leading, spacing: 10) {
+    private var notRunningSection: some View {
+        Section {
             Text("splitroute runs as a system service so it can change routes. Installing it asks for your administrator password once.")
                 .fixedSize(horizontal: false, vertical: true)
             if model.connError == .notRunning {
                 Button("Install Service") { Task { await model.installService() } }
+                    .prominent()
                     .disabled(model.busy)
             }
             errorText
         }
     }
 
-    private var presetBox: some View {
-        GroupBox("Preset") {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                    Picker("Preset", selection: $presetID) {
-                        Text("Choose…").tag("")
-                        ForEach(model.presets) { Text($0.name).tag($0.id) }
-                    }
-                    .labelsHidden()
-                    .frame(maxWidth: 260)
-                    Button("Apply Preset…") { confirmPreset = true }
-                        .disabled(presetID.isEmpty || model.busy)
-                }
-                if let p = model.presets.first(where: { $0.id == presetID }) {
-                    Text(p.lists.map { "\($0.action.label): \($0.name)" }.joined(separator: " · "))
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                Text("A preset replaces the release lists. Your custom lists are kept.")
+    private var presetSection: some View {
+        Section {
+            Picker("Preset", selection: $presetID) {
+                Text("Choose…").tag("")
+                ForEach(model.presets) { Text($0.name).tag($0.id) }
+            }
+            if let p = model.presets.first(where: { $0.id == presetID }) {
+                Text(p.lists.map { "\($0.action.label): \($0.name)" }.joined(separator: " · "))
                     .font(.caption).foregroundStyle(.secondary)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(4)
+            HStack {
+                Spacer()
+                Button("Apply Preset…") { confirmPreset = true }
+                    .disabled(presetID.isEmpty || model.busy)
+            }
+        } header: {
+            Text("Preset")
+        } footer: {
+            Text("A preset replaces the release lists. Your custom lists are kept.")
+                .font(.caption).foregroundStyle(.secondary)
         }
         .confirmationDialog("Apply this preset?", isPresented: $confirmPreset) {
             Button("Apply") { Task { await model.applyPreset(presetID) } }
@@ -113,42 +115,67 @@ struct SettingsView: View {
         }
     }
 
-    private var listsBox: some View {
-        GroupBox("Lists") {
-            VStack(alignment: .leading, spacing: 8) {
-                if draft.lists.isEmpty {
-                    Text("No lists: all traffic follows the VPN.")
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, minHeight: 80)
-                } else {
-                    List {
-                        ForEach(Array(draft.lists.enumerated()), id: \.element.id) { i, l in
-                            row(l, index: i)
-                        }
-                    }
-                    .listStyle(.inset(alternatesRowBackgrounds: true))
-                    .frame(minHeight: 180)
-                }
-                HStack {
-                    Menu("Add Release List") {
-                        let missing = model.available.filter { n in !draft.lists.contains { $0.name == n } }
-                        if missing.isEmpty { Text(model.available.isEmpty ? "Can't reach the release" : "All lists added") }
-                        ForEach(missing, id: \.self) { n in
-                            Button(n) { draft.lists.append(RouteList(name: n, action: .direct)) }
-                        }
-                    }
-                    .fixedSize()
-                    Button("New Custom List…") {
-                        editor = EditorTarget(index: nil, list: RouteList(name: "", action: .direct, custom: true))
-                    }
-                    Spacer()
-                }
-                Text("Direct: through your normal connection, outside the VPN. Block: dropped. VPN: left alone. Only IPv4 ranges are routed; domain-only lists (ads, nsfw) have no effect.")
-                    .font(.caption).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+    private var listsSection: some View {
+        Section {
+            if draft.lists.isEmpty {
+                Text("No lists: all traffic follows the VPN.").foregroundStyle(.secondary)
             }
-            .padding(4)
+            ForEach(Array(draft.lists.enumerated()), id: \.element.id) { i, l in
+                row(l, index: i)
+            }
+            HStack {
+                Menu("Add Release List") {
+                    let missing = model.available.filter { n in !draft.lists.contains { $0.name == n } }
+                    if missing.isEmpty { Text(model.available.isEmpty ? "Can't reach the release" : "All lists added") }
+                    ForEach(missing, id: \.self) { n in
+                        Button(n) { draft.lists.append(RouteList(name: n, action: .direct)) }
+                    }
+                }
+                .fixedSize()
+                Button("New Custom List…") {
+                    editor = EditorTarget(index: nil, list: RouteList(name: "", action: .direct, custom: true))
+                }
+                Spacer()
+            }
+        } header: {
+            Text("Lists")
+        } footer: {
+            Text("Direct: through your normal connection, outside the VPN. Block: dropped. VPN: left alone. Only IPv4 ranges are routed; domain-only lists (ads, nsfw) have no effect.")
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
+    }
+
+    private var generalSection: some View {
+        Section {
+            Toggle("Open at login", isOn: Binding(
+                get: { model.launchAtLogin },
+                set: { model.setLaunchAtLogin($0) }
+            ))
+            LabeledContent("System service") {
+                Button("Uninstall…") { Task { await model.uninstallService() } }
+                    .disabled(model.busy)
+            }
+        } footer: {
+            Text("Quitting this app only closes the menu bar icon; the service keeps routing until you turn it off or uninstall it.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    private var applyBar: some View {
+        HStack {
+            errorText
+            Spacer()
+            if model.busy { ProgressView().controlSize(.small) }
+            Button("Revert") { if let c = model.config { draft = c } }
+                .disabled(!dirty || model.busy)
+            Button("Apply") { Task { await model.save(draft) } }
+                .keyboardShortcut(.defaultAction)
+                .prominent()
+                .disabled(!dirty || model.busy)
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 12)
     }
 
     private func row(_ l: RouteList, index i: Int) -> some View {
@@ -181,33 +208,6 @@ struct SettingsView: View {
             parts.append("\(n.formatted()) routes applied")
         }
         return parts.joined(separator: " · ")
-    }
-
-    private var footer: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                errorText
-                Spacer()
-                if model.busy { ProgressView().controlSize(.small) }
-                Button("Revert") { if let c = model.config { draft = c } }
-                    .disabled(!dirty || model.busy)
-                Button("Apply") { Task { await model.save(draft) } }
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(!dirty || model.busy)
-            }
-            Divider()
-            HStack {
-                Toggle("Open at login", isOn: Binding(
-                    get: { model.launchAtLogin },
-                    set: { model.setLaunchAtLogin($0) }
-                ))
-                Spacer()
-                Button("Uninstall Service…") { Task { await model.uninstallService() } }
-                    .disabled(model.busy)
-            }
-            Text("Quitting this app only closes the menu bar icon; the service keeps routing until you turn it off or uninstall it.")
-                .font(.caption).foregroundStyle(.secondary)
-        }
     }
 
     @ViewBuilder private var errorText: some View {
@@ -281,6 +281,7 @@ struct CustomListEditor: View {
                     dismiss()
                 }
                 .keyboardShortcut(.defaultAction)
+                .prominent()
                 .disabled(nameProblem != nil)
             }
             Text("Entries are checked when you apply the settings.")
@@ -289,5 +290,23 @@ struct CustomListEditor: View {
         .padding(20)
         .frame(width: 460)
         .onAppear { text = list.entries.joined(separator: "\n") }
+    }
+}
+
+extension View {
+    /// Liquid Glass on macOS 26+, the classic prominent style before.
+    @ViewBuilder func prominent() -> some View {
+        if #available(macOS 26, *) { buttonStyle(.glassProminent) } else { buttonStyle(.borderedProminent) }
+    }
+
+    /// A bottom bar over the scroll view: on macOS 26+ it gets the glass scroll edge effect.
+    @ViewBuilder func applyBar(visible: Bool, @ViewBuilder _ bar: () -> some View) -> some View {
+        if !visible {
+            self
+        } else if #available(macOS 26, *) {
+            safeAreaBar(edge: .bottom) { bar() }
+        } else {
+            safeAreaInset(edge: .bottom, spacing: 0) { bar().background(.bar) }
+        }
     }
 }
