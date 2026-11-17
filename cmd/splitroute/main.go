@@ -21,6 +21,7 @@ import (
 	"github.com/aliraghebi/splitroute/internal/lists"
 	"github.com/aliraghebi/splitroute/internal/platform"
 	"github.com/aliraghebi/splitroute/internal/state"
+	"github.com/aliraghebi/splitroute/internal/store"
 )
 
 var version = "dev"
@@ -40,11 +41,16 @@ Commands:
   uninstall  stop and remove the service, then remove the routes
   version    print the version
 
-Config (default /etc/splitroute.conf, JSON; without it, ir-cidr goes direct):
+  config export         print the settings as JSON
+  config import <file>  replace the settings with a JSON (or 0.1-format) file
+
+Settings live in a database in the state directory. The first run as root
+imports the config file (default /etc/splitroute.conf; without it, ir-cidr goes
+direct); after that the file is no longer read. The JSON format:
   {"lists": [
     {"name": "ir-cidr", "action": "direct"},
     {"name": "malware", "action": "block"},
-    {"name": "Work", "custom": true, "action": "direct", "entries": ["203.0.113.0/24"]}
+    {"name": "Work", "custom": true, "action": "direct", "entries": ["203.0.113.0/24", "example.com"]}
   ]}
 direct: via the physical gateway, outside the VPN; block: drop; vpn: leave alone.
 The 0.1 format ("ir-cidr = direct" lines) is still read.
@@ -79,7 +85,7 @@ func main() {
 		}
 		args = append(args, fs.Arg(0))
 	}
-	if len(args) > 1 || (len(args) == 1 && cmd != "preset") {
+	if maxArgs := map[string]int{"preset": 1, "config": 2}; len(args) > maxArgs[cmd] {
 		fs.Usage()
 		os.Exit(2)
 	}
@@ -93,23 +99,25 @@ func main() {
 // system state); change is replaced by a printer in dry-run mode. They are the
 // only way anything here touches the system.
 type app struct {
-	goos    string
-	cfgPath string
-	dry     bool
-	query   platform.QueryFunc
-	change  platform.ChangeFunc
-	store   state.Store
-	routes  route.Engine
+	goos     string
+	cfgPath  string // the old config file: imported into the database on the first root run
+	dry      bool
+	canWrite bool // may open the settings database read-write (root, not dry-run)
+	query    platform.QueryFunc
+	change   platform.ChangeFunc
+	state    state.Store
+	routes   route.Engine
 
-	cfgMu   sync.Mutex    // serializes config read-modify-write
+	dbMu    sync.Mutex
+	db      *store.Store  // opened on first use by settings()
 	reload  chan struct{} // set by watch: asks it to re-apply now
 	errMu   sync.Mutex
 	lastErr string // watch: the last failed apply, for status
 }
 
 func newApp(goos, cfgPath string, dry bool) *app {
-	a := &app{goos: goos, cfgPath: cfgPath, dry: dry, query: platform.ExecQuery, change: platform.ExecChange}
-	a.store = state.Store{Dir: state.DefaultDir(goos), Dry: dry}
+	a := &app{goos: goos, cfgPath: cfgPath, dry: dry, canWrite: !dry && os.Geteuid() == 0, query: platform.ExecQuery, change: platform.ExecChange}
+	a.state = state.Store{Dir: state.DefaultDir(goos), Dry: dry}
 	if dry {
 		a.change = func(name string, args []string, stdin string) error {
 			fmt.Println(name, strings.Join(args, " "))
@@ -124,23 +132,27 @@ func newApp(goos, cfgPath string, dry bool) *app {
 }
 
 func (a *app) do(cmd string, args []string) error {
-	needRoot := map[string]bool{"up": true, "down": true, "watch": true, "install": true, "uninstall": true, "preset": len(args) > 0}
+	needRoot := map[string]bool{"up": true, "down": true, "watch": true, "install": true, "uninstall": true,
+		"preset": len(args) > 0, "config": len(args) > 0 && args[0] == "import"}
 	if needRoot[cmd] && !a.dry && os.Geteuid() != 0 {
 		return fmt.Errorf("%s needs root: run it with sudo", cmd)
 	}
+	defer a.closeSettings()
 	switch cmd {
 	case "up":
-		return a.store.WithLock(func() error { _, err := a.up(false); return err })
+		return a.state.WithLock(func() error { _, err := a.up(false); return err })
 	case "down":
-		return a.store.WithLock(a.down)
+		return a.state.WithLock(a.down)
 	case "status":
 		return a.printStatus()
 	case "watch":
-		return a.store.WithLock(a.watch)
+		return a.state.WithLock(a.watch)
 	case "lists":
 		return a.printLists()
 	case "preset":
 		return a.runPreset(args)
+	case "config":
+		return a.configCmd(args)
 	case "install":
 		return a.install()
 	case "uninstall":

@@ -47,6 +47,9 @@ type Entry struct {
 func (e Entry) String() string {
 	switch e.Kind {
 	case CIDR:
+		if e.Prefix.IsSingleIP() {
+			return e.Prefix.Addr().String()
+		}
 		return e.Prefix.String()
 	case Domain:
 		return "full:" + e.Name

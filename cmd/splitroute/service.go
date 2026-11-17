@@ -72,5 +72,5 @@ func (a *app) uninstall() error {
 			return err
 		}
 	}
-	return a.store.WithLock(a.down) // in case the service wasn't running
+	return a.state.WithLock(a.down) // in case the service wasn't running
 }

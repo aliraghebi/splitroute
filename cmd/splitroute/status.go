@@ -9,14 +9,13 @@ import (
 	"time"
 
 	"github.com/aliraghebi/splitroute/internal/api"
-	"github.com/aliraghebi/splitroute/internal/config"
 	"github.com/aliraghebi/splitroute/internal/platform"
 )
 
 // Status builds the report for `status` and the control socket.
 func (a *app) Status() (api.Status, error) {
 	s := api.Status{Version: version, Lists: []api.ListCount{}}
-	cfg, err := config.Load(a.cfgPath)
+	cfg, err := a.LoadConfig()
 	if err != nil {
 		return s, err
 	}
@@ -27,7 +26,7 @@ func (a *app) Status() (api.Status, error) {
 		s.Gateway = &gw
 	}
 	s.VPN = platform.VPNIface(a.goos, a.query)
-	st, err := a.store.Load()
+	st, err := a.state.Load()
 	if err != nil {
 		return s, err
 	}

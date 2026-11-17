@@ -1,0 +1,472 @@
+// Package store keeps the settings and lists in a SQLite database
+// (modernc.org/sqlite: pure Go, so release builds stay CGO_ENABLED=0).
+//
+// The daemon and root CLI commands open it read-write; anyone else opens it
+// read-only. It uses a rollback journal, not WAL: WAL readers need write access
+// to the -shm file, which would break non-root `status`. Writes are rare, so
+// WAL's concurrency buys nothing here.
+package store
+
+import (
+	"database/sql"
+	"embed"
+	"errors"
+	"fmt"
+	"io/fs"
+	"net/url"
+	"os"
+	"path"
+	"path/filepath"
+	"slices"
+	"strings"
+	"time"
+
+	_ "modernc.org/sqlite"
+
+	"github.com/aliraghebi/splitroute/internal/config"
+	"github.com/aliraghebi/splitroute/internal/rules"
+)
+
+//go:embed migrations/*.sql
+var migrationFS embed.FS
+
+// ErrNotInitialized: the database has no settings yet (before the first
+// run as root imported the config file).
+var ErrNotInitialized = errors.New("settings database not initialized")
+
+// Store is an open settings database. Its methods are safe for concurrent use.
+type Store struct {
+	db       *sql.DB
+	now      func() time.Time
+	dataVer  int64
+	verKnown bool
+}
+
+// Open opens the database read-write, creating it (mode 0644) and its
+// directory if needed, checks it and applies pending migrations. A corrupt
+// database or one from a newer splitroute is an error, never reset.
+func Open(file string) (*Store, error) {
+	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+		return nil, err
+	}
+	if f, err := os.OpenFile(file, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o644); err == nil {
+		f.Close()
+	} else if !errors.Is(err, fs.ErrExist) {
+		return nil, err
+	}
+	s, err := open(file, "rwc", "_txlock=immediate", "_pragma=journal_mode(DELETE)")
+	if err != nil {
+		return nil, err
+	}
+	if err := s.migrate(); err != nil {
+		s.Close()
+		return nil, fmt.Errorf("%s: %w", file, err)
+	}
+	return s, nil
+}
+
+// OpenReadOnly opens an existing database for reading. It fails with
+// fs.ErrNotExist if there is none, and if its schema is not exactly the one
+// this binary knows (a root run migrates it).
+func OpenReadOnly(file string) (*Store, error) {
+	if _, err := os.Stat(file); err != nil {
+		return nil, err
+	}
+	s, err := open(file, "ro")
+	if err != nil {
+		return nil, err
+	}
+	v, err := s.version()
+	if err == nil && v != len(migrations()) {
+		err = fmt.Errorf("%s: schema version %d, this splitroute reads %d (run a root command to migrate)", file, v, len(migrations()))
+	}
+	if err != nil {
+		s.Close()
+		return nil, err
+	}
+	return s, nil
+}
+
+func open(file, mode string, params ...string) (*Store, error) {
+	q := append([]string{
+		"mode=" + mode,
+		"_pragma=foreign_keys(1)",
+		"_pragma=busy_timeout(5000)",
+		"_pragma=synchronous(FULL)",
+	}, params...)
+	dsn := (&url.URL{Scheme: "file", Path: file, RawQuery: strings.Join(q, "&")}).String()
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, err
+	}
+	// One connection: writes are serialized anyway, and PRAGMA data_version
+	// must be read on the same connection every time.
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	db.SetConnMaxLifetime(0)
+	s := &Store{db: db, now: time.Now}
+	var res string
+	if err := db.QueryRow("PRAGMA quick_check").Scan(&res); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("%s: %w", file, err)
+	}
+	if res != "ok" {
+		db.Close()
+		return nil, fmt.Errorf("%s is damaged (%s); restore it from a backup or move it away and re-import with `splitroute config import`", file, res)
+	}
+	return s, nil
+}
+
+func (s *Store) Close() error { return s.db.Close() }
+
+func migrations() []string {
+	names, _ := fs.Glob(migrationFS, "migrations/*.sql")
+	slices.Sort(names)
+	return names
+}
+
+func (s *Store) version() (int, error) {
+	var v int
+	err := s.db.QueryRow("PRAGMA user_version").Scan(&v)
+	return v, err
+}
+
+// migrate applies each migration in its own transaction, together with the
+// user_version bump, so a crash leaves the database at a whole version.
+func (s *Store) migrate() error {
+	v, err := s.version()
+	if err != nil {
+		return err
+	}
+	ms := migrations()
+	if v > len(ms) {
+		return fmt.Errorf("schema version %d is newer than this splitroute (%d); upgrade splitroute", v, len(ms))
+	}
+	for i := v; i < len(ms); i++ {
+		b, err := migrationFS.ReadFile(ms[i])
+		if err != nil {
+			return err
+		}
+		tx, err := s.db.Begin()
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(string(b)); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("%s: %w", path.Base(ms[i]), err)
+		}
+		if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", i+1)); err != nil {
+			tx.Rollback()
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Init stores cfg as the first settings, if there are none yet; from records
+// where they came from (the imported file, or "" for defaults). It reports
+// whether it wrote anything: false means another process got there first.
+func (s *Store) Init(cfg config.Config, from string) (bool, error) {
+	if err := cfg.Validate(); err != nil {
+		return false, err
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	var n int
+	if err := tx.QueryRow("SELECT count(*) FROM settings").Scan(&n); err != nil || n > 0 {
+		return false, err
+	}
+	if _, err := tx.Exec("INSERT INTO settings (id, migrated_from, created_at) VALUES (1, ?, ?)", from, s.stamp()); err != nil {
+		return false, err
+	}
+	if err := s.write(tx, cfg); err != nil {
+		return false, err
+	}
+	return true, tx.Commit()
+}
+
+// MigratedFrom is the config file the settings were imported from, or "".
+func (s *Store) MigratedFrom() (string, time.Time, error) {
+	var from, at string
+	err := s.db.QueryRow("SELECT migrated_from, created_at FROM settings WHERE id = 1").Scan(&from, &at)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", time.Time{}, ErrNotInitialized
+	}
+	t, _ := time.Parse(time.RFC3339Nano, at)
+	return from, t, err
+}
+
+// Config reads the settings. ErrNotInitialized if there are none yet.
+func (s *Store) Config() (config.Config, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return config.Config{}, err
+	}
+	defer tx.Rollback()
+	return read(tx)
+}
+
+// Update reads the settings, changes them with f, validates and writes them
+// in one transaction, so concurrent writers (the daemon and a root CLI
+// command) can't lose each other's changes.
+func (s *Store) Update(f func(config.Config) (config.Config, error)) (config.Config, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return config.Config{}, err
+	}
+	defer tx.Rollback()
+	cfg, err := read(tx)
+	if err != nil {
+		return config.Config{}, err
+	}
+	if cfg, err = f(cfg); err != nil {
+		return config.Config{}, err
+	}
+	if err := cfg.Validate(); err != nil {
+		return config.Config{}, err
+	}
+	if err := s.write(tx, cfg); err != nil {
+		return config.Config{}, err
+	}
+	return cfg, tx.Commit()
+}
+
+// Changed reports whether another connection (another process) committed
+// since the last call. The first call only records the baseline.
+func (s *Store) Changed() (bool, error) {
+	var v int64
+	if err := s.db.QueryRow("PRAGMA data_version").Scan(&v); err != nil {
+		return false, err
+	}
+	changed := s.verKnown && v != s.dataVer
+	s.dataVer, s.verKnown = v, true
+	return changed, nil
+}
+
+func (s *Store) stamp() string { return s.now().UTC().Format(time.RFC3339Nano) }
+
+func read(tx *sql.Tx) (config.Config, error) {
+	var cfg config.Config
+	var disabled int
+	err := tx.QueryRow("SELECT base_url, disabled FROM settings WHERE id = 1").Scan(&cfg.BaseURL, &disabled)
+	if errors.Is(err, sql.ErrNoRows) {
+		return config.Config{}, ErrNotInitialized
+	}
+	if err != nil {
+		return config.Config{}, err
+	}
+	cfg.Disabled = disabled == 1
+	rows, err := tx.Query("SELECT id, name, source, action, note FROM lists ORDER BY position, id")
+	if err != nil {
+		return config.Config{}, err
+	}
+	idx := map[int64]int{}
+	notes := map[int64]string{}
+	for rows.Next() {
+		var id int64
+		var l config.List
+		var source, note string
+		if err := rows.Scan(&id, &l.Name, &source, &l.Action, &note); err != nil {
+			rows.Close()
+			return config.Config{}, err
+		}
+		l.Custom = source == "custom"
+		idx[id] = len(cfg.Lists)
+		notes[id] = note
+		cfg.Lists = append(cfg.Lists, l)
+	}
+	if err := closeRows(rows); err != nil {
+		return config.Config{}, err
+	}
+	rows, err = tx.Query("SELECT list_id, kind, value, note FROM entries ORDER BY list_id, position")
+	if err != nil {
+		return config.Config{}, err
+	}
+	for rows.Next() {
+		var id int64
+		var kind, value, note string
+		if err := rows.Scan(&id, &kind, &value, &note); err != nil {
+			rows.Close()
+			return config.Config{}, err
+		}
+		i, ok := idx[id]
+		if !ok {
+			continue // unreachable with foreign keys on
+		}
+		cfg.Lists[i].Entries = append(cfg.Lists[i].Entries, append(noteLines(note), entryText(rules.Kind(kind), value))...)
+	}
+	if err := closeRows(rows); err != nil {
+		return config.Config{}, err
+	}
+	for id, i := range idx {
+		cfg.Lists[i].Entries = append(cfg.Lists[i].Entries, noteLines(notes[id])...)
+	}
+	// Hand edits bypass config.Validate; never hand an invalid config to the
+	// route planner.
+	if err := cfg.Validate(); err != nil {
+		return config.Config{}, fmt.Errorf("settings database: %w", err)
+	}
+	return cfg, nil
+}
+
+func closeRows(rows *sql.Rows) error {
+	err := rows.Err()
+	if cerr := rows.Close(); err == nil {
+		err = cerr
+	}
+	return err
+}
+
+// write replaces the stored settings with cfg (already validated). Lists keep
+// their id and created_at across saves; lists missing from cfg are deleted
+// with their entries.
+func (s *Store) write(tx *sql.Tx, cfg config.Config) error {
+	now := s.stamp()
+	if _, err := tx.Exec("UPDATE settings SET base_url = ?, disabled = ? WHERE id = 1", cfg.BaseURL, boolInt(cfg.Disabled)); err != nil {
+		return err
+	}
+	existing := map[string]int64{}
+	rows, err := tx.Query("SELECT id, name FROM lists")
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var id int64
+		var name string
+		if err := rows.Scan(&id, &name); err != nil {
+			rows.Close()
+			return err
+		}
+		existing[name] = id
+	}
+	if err := closeRows(rows); err != nil {
+		return err
+	}
+	ins, err := tx.Prepare("INSERT INTO entries (list_id, position, kind, value, note) VALUES (?, ?, ?, ?, ?)")
+	if err != nil {
+		return err
+	}
+	defer ins.Close()
+	for pos, l := range cfg.Lists {
+		source := "release"
+		if l.Custom {
+			source = "custom"
+		}
+		ents, listNote, err := toRows(l.Entries)
+		if err != nil {
+			return fmt.Errorf("list %q: %w", l.Name, err)
+		}
+		id, ok := existing[l.Name]
+		if ok {
+			delete(existing, l.Name)
+			if _, err := tx.Exec("UPDATE lists SET source = ?, action = ?, position = ?, note = ?, updated_at = ? WHERE id = ?",
+				source, l.Action, pos, listNote, now, id); err != nil {
+				return err
+			}
+			if _, err := tx.Exec("DELETE FROM entries WHERE list_id = ?", id); err != nil {
+				return err
+			}
+		} else {
+			res, err := tx.Exec("INSERT INTO lists (name, source, action, position, note, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+				l.Name, source, l.Action, pos, listNote, now, now)
+			if err != nil {
+				return err
+			}
+			if id, err = res.LastInsertId(); err != nil {
+				return err
+			}
+		}
+		for i, e := range ents {
+			if _, err := ins.Exec(id, i, string(e.Kind), e.value, e.note); err != nil {
+				return err
+			}
+		}
+	}
+	for _, id := range existing {
+		if _, err := tx.Exec("DELETE FROM lists WHERE id = ?", id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type row struct {
+	Kind  rules.Kind
+	value string
+	note  string
+}
+
+// toRows turns a custom list's lines into entry rows in canonical form,
+// dropping duplicates. "#" lines become the note of the next entry; those
+// after the last entry become the list's note. Blank lines are dropped.
+func toRows(lines []string) ([]row, string, error) {
+	var out []row
+	var pending []string
+	seen := map[string]bool{}
+	for _, l := range lines {
+		l = strings.TrimSpace(l)
+		switch {
+		case l == "":
+		case strings.HasPrefix(l, "#"):
+			pending = append(pending, strings.TrimSpace(strings.TrimPrefix(l, "#")))
+		default:
+			e, err := rules.ParseEntry(l)
+			if err != nil {
+				return nil, "", err
+			}
+			v := entryValue(e)
+			if k := string(e.Kind) + " " + v; !seen[k] {
+				seen[k] = true
+				out = append(out, row{e.Kind, v, strings.Join(pending, "\n")})
+				pending = nil
+			}
+		}
+	}
+	return out, strings.Join(pending, "\n"), nil
+}
+
+// entryValue is the stored value: the entry without its kind marker.
+func entryValue(e rules.Entry) string {
+	switch e.Kind {
+	case rules.Domain:
+		return e.Name
+	case rules.ASN:
+		return strings.TrimPrefix(e.String(), "AS")
+	}
+	return e.String() // CIDR as typed back (a single address without /32), domain suffix as is
+}
+
+// entryText is the line a stored entry reads back as (rules.ParseEntry syntax).
+func entryText(kind rules.Kind, value string) string {
+	switch kind {
+	case rules.Domain:
+		return "full:" + value
+	case rules.ASN:
+		return "AS" + value
+	}
+	return value
+}
+
+func noteLines(note string) []string {
+	if note == "" {
+		return nil
+	}
+	var out []string
+	for _, l := range strings.Split(note, "\n") {
+		out = append(out, strings.TrimSpace("# "+l))
+	}
+	return out
+}
+
+func boolInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}

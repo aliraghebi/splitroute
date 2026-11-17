@@ -16,7 +16,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aliraghebi/splitroute/internal/config"
 	"github.com/aliraghebi/splitroute/internal/engine/route"
 	"github.com/aliraghebi/splitroute/internal/lists"
 	"github.com/aliraghebi/splitroute/internal/platform"
@@ -27,7 +26,7 @@ import (
 // want downloads the configured release lists, adds the custom lists and
 // plans the routes. A disabled config plans none.
 func (a *app) want() ([]rules.Route, []string, error) {
-	cfg, err := config.Load(a.cfgPath)
+	cfg, err := a.LoadConfig()
 	if err != nil || cfg.Disabled {
 		return nil, nil, err
 	}
@@ -49,7 +48,7 @@ func (a *app) want() ([]rules.Route, []string, error) {
 			names = append(names, l.Name)
 		}
 	}
-	files, fwarn, err := lists.Fetch(cfg.ListsURL(), filepath.Join(a.store.Dir, "lists"), names, !a.dry)
+	files, fwarn, err := lists.Fetch(cfg.ListsURL(), filepath.Join(a.state.Dir, "lists"), names, !a.dry)
 	warn = append(warn, fwarn...)
 	if err != nil {
 		return nil, warn, err
@@ -100,7 +99,7 @@ func (a *app) up(force bool) (state.State, error) {
 	if err != nil {
 		return state.State{}, err
 	}
-	st, err := a.store.Load()
+	st, err := a.state.Load()
 	if err != nil {
 		return state.State{}, err
 	}
@@ -116,7 +115,7 @@ func (a *app) applyAndSave(old, next state.State, force bool) error {
 	del, add := route.Changes(old.Routes, old.Gateway, next.Routes, next.Gateway, force)
 	err := a.routes.Apply(del, add, next.Gateway)
 	// Save even after a partial failure, so `down` can remove what was added.
-	if serr := a.store.Save(next); serr != nil && err == nil {
+	if serr := a.state.Save(next); serr != nil && err == nil {
 		err = serr
 	}
 	if err == nil {
@@ -126,13 +125,13 @@ func (a *app) applyAndSave(old, next state.State, force bool) error {
 }
 
 func (a *app) down() error {
-	st, err := a.store.Load()
+	st, err := a.state.Load()
 	if err != nil {
 		return err
 	}
 	err = a.routes.RemoveAll(st.Routes, st.Gateway)
 	if !a.dry {
-		if rerr := os.Remove(a.store.Path()); rerr != nil && !errors.Is(rerr, fs.ErrNotExist) && err == nil {
+		if rerr := os.Remove(a.state.Path()); rerr != nil && !errors.Is(rerr, fs.ErrNotExist) && err == nil {
 			err = rerr
 		}
 	}

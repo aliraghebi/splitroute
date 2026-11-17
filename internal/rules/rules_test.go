@@ -34,7 +34,8 @@ func TestParseEntries(t *testing.T) {
 
 func TestParseEntry(t *testing.T) {
 	ok := []struct{ in, want string }{
-		{"203.0.113.7", "203.0.113.7/32"},
+		{"203.0.113.7", "203.0.113.7"},
+		{"203.0.113.7/32", "203.0.113.7"},
 		{"198.51.100.9/24", "198.51.100.0/24"},
 		{"2400:cb00::/32", "2400:cb00::/32"},
 		{"2a06:98c0::/29", "2a06:98c0::/29"}, // broadest real IPv6 in the lists is /26

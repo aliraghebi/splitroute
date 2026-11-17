@@ -13,7 +13,8 @@ and imports, and a redesigned macOS settings app. Later: our own tunnels and mob
 |------|------|
 | `cmd/splitroute/` | CLI and the `app`: wiring, `up`/`down` orchestration (`apply.go`), service loop (`watch.go`), install (`service.go`), status printing, config updates and presets (`config.go`); implements `api.Backend`. Owns `query`/`change`, the only functions that run commands |
 | `internal/rules/` | Pure model: `Action`, typed entries (`entry.go`: CIDR, domain, domain suffix, ASN; `ParseEntry` syntax, floors, reserved ranges), `Route`, `Plan` and the route cap |
-| `internal/config/` | Config (JSON, and the 0.1 `list = action` format), `Validate`, load/save, presets |
+| `internal/config/` | `Config` type, `Validate`, JSON and 0.1 `list = action` parsing (import and first-run migration), presets |
+| `internal/store/` | Settings database (SQLite, `modernc.org/sqlite`): schema in `migrations/*.sql` (applied by `PRAGMA user_version`), `Init`/`Config`/`Update` (one transaction), `Changed` (`PRAGMA data_version`) |
 | `internal/lists/` | Download, `SHA256SUMS` check, last-good cache, `.list` parsing into typed entries |
 | `internal/state/` | Saved state file and the lock around route changes |
 | `internal/platform/` | OS-specific: command runner types, gateway/VPN detection and parsers, route socket (`netwatch_{darwin,linux}.go`), launchd/systemd files |
@@ -35,11 +36,17 @@ and imports, and a redesigned macOS settings app. Later: our own tunnels and mob
 - Never weaken the safety checks: ranges broader than /8 (IPv4) or /16 (IPv6) are refused, reserved ranges
   are skipped, domains pass `rules.DomainEntry` (they become file names), the route count is capped, lists
   must match `SHA256SUMS`, and `down` removes exactly what `up` added.
-- The daemon is the only writer of the config at runtime; everything from the socket goes through
-  `Config.Validate` (same checks as the file). Socket: root:admin 0660 on macOS, root-only elsewhere.
+- Settings live only in the database (`<state dir>/splitroute.db`, 0644, rollback journal: non-root readers
+  must keep working, so no WAL). Every write goes through `store.Update`/`Init`, which run `Config.Validate`
+  in the same transaction; reads validate too. Writers: the daemon (socket requests) and root CLI commands;
+  the daemon notices other processes' writes via `store.Changed`. Socket: root:admin 0660 on macOS,
+  root-only elsewhere.
+- Schema changes: a new numbered file in `internal/store/migrations/`, never edit an applied one. A newer
+  schema or a failed `quick_check` is refused, never reset or recreated. `/etc/splitroute.conf` is read only
+  to seed a new database (and by `config import`).
 - Never overwrite the saved state with an empty one unless routes were really removed.
 - Every bug fix gets a table test; parsers get a fixture copied from real command output.
-- The app never touches routes or the config file: everything goes through the socket. Wire types in
+- The app never touches routes or the settings database: everything goes through the socket. Wire types in
   `Daemon.swift` mirror the Go JSON; change both together.
 - English only in code, comments, commits and logs.
 

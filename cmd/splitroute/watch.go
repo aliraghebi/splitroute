@@ -18,8 +18,8 @@ import (
 	"github.com/aliraghebi/splitroute/internal/state"
 )
 
-// watch applies the routes, then re-applies them when the config changes
-// (socket request or file edit), when the gateway changes, when they disappear
+// watch applies the routes, then re-applies them when the settings change
+// (socket request, or a root CLI command writing the database), when the gateway changes, when they disappear
 // (VPN reconnects often rewrite routes) and once a day with fresh lists. On
 // SIGINT/SIGTERM it removes them: routes left behind would point at a gateway
 // nobody maintains.
@@ -34,9 +34,9 @@ func (a *app) watch() error {
 		go api.Serve(ln, a)
 	}
 	var st state.State
-	var cfgMod time.Time
+	var staleWarned bool
+	a.settingsChanged() // baseline, before the first read
 	refresh := func() {
-		cfgMod = modTime(a.cfgPath)
 		next, err := a.up(false)
 		a.setLastErr(err)
 		if err != nil {
@@ -75,7 +75,8 @@ func (a *app) watch() error {
 			settle = nil
 		case <-t.C:
 		}
-		if time.Since(st.Fetched) > refreshEvery || !modTime(a.cfgPath).Equal(cfgMod) {
+		a.warnStaleFile(&staleWarned)
+		if a.settingsChanged() || time.Since(st.Fetched) > refreshEvery {
 			refresh()
 			continue
 		}

@@ -83,7 +83,17 @@ Add `--dry-run` to any command to print the route changes instead of making them
 
 ## Config
 
-`/etc/splitroute.conf` (or `--config <path>`), JSON. Without it, `ir-cidr` goes direct.
+Settings live in a SQLite database: `/var/db/splitroute/splitroute.db` on macOS,
+`/var/lib/splitroute/splitroute.db` on Linux. Change them with the menu bar app, `splitroute preset`, or as JSON:
+
+```sh
+splitroute config export > settings.json        # anyone can read
+sudo splitroute config import settings.json     # validated, then applied within 15 seconds
+```
+
+The first run as root imports `/etc/splitroute.conf` (or `--config <path>`) if it exists; without it, `ir-cidr`
+goes direct. After that the file is **no longer read** (the service logs a warning if it changes); it is left
+in place so an older splitroute still finds it. The JSON format:
 
 ```json
 {
@@ -103,10 +113,13 @@ Add `--dry-run` to any command to print the route changes instead of making them
   now; the rest is validated and kept for domain and ASN routing.
 - `"disabled": true` removes the routes but keeps the service running.
 - `"base_url"` overrides the release URL (https only).
-- The 0.1 format (`ir-cidr = direct` lines) is still read; saving from the app or `preset` rewrites it as JSON.
+- `config import` also reads the 0.1 format (`ir-cidr = direct` lines).
+- In custom lists, `#` lines are notes: kept with the entry that follows them. Entries are stored in a
+  canonical form (`Example.COM` → `example.com`, `198.51.100.9/24` → `198.51.100.0/24`), and duplicates and
+  blank lines are dropped.
 
 Only a list's **IPv4 ranges** are routed; domain-only lists (`ads`, `nsfw`, …) have no effect. The service
-applies config changes within 15 seconds.
+applies settings changes within 15 seconds.
 
 ### Presets
 

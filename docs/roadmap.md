@@ -70,18 +70,22 @@ Policy = ordered [{list, action}]      action: direct | block | vpn
    needed. Release lists parse all four `.list` line types. Route mode still routes IPv4 only.
    **Policy order** is split out: a VPN list overriding a direct one means a route via the VPN interface
    (which changes with the VPN), not just a planning change. Do it with its own design.
-2. **User lists**: any entry type, created from the CLI and the app. Stored as files in the daemon's data
-   dir once they grow; the config keeps the reference.
-3. **ASN**: routing-rules publishes per-ASN CIDR lists at build time from public BGP data (separate repo
+2. **Settings database**: done. SQLite (`modernc.org/sqlite`, +3.9 MB, pure Go) chosen over bbolt
+   (+0.26 MB) for integrity checks, constraints and tooling. `internal/store`; the old config file seeds a
+   new database once; `config export`/`import`. Release list cache and `state.json` stay files for now;
+   state moves in with learned DNS addresses (domain step).
+3. **User lists**: any entry type, created from the CLI and the app, as rows in the database. Finer socket
+   commands (add/remove entries, reorder) instead of whole-config `set_config`.
+4. **ASN**: routing-rules publishes per-ASN CIDR lists at build time from public BGP data (separate repo
    change). The client treats them as CIDR lists: offline, `SHA256SUMS`-checked. `AS12345` typed in a user
    list resolves via the routing-rules index, never a live third-party API from a root daemon.
-4. **Imports** (URL or file): plain text and hosts files first, then AdGuard/uBlock (domain rules only),
+5. **Imports** (URL or file): plain text and hosts files first, then AdGuard/uBlock (domain rules only),
    Clash rule-provider YAML, sing-box `.srs`, v2ray `geoip.dat`/`geosite.dat`. One parser per format,
    fixtures from real files.
    Imports have no `SHA256SUMS`, so they get their own checks, written into CLAUDE.md when they land: HTTPS
    only, size cap, entry cap, the same /8 and reserved-range checks, the same route cap, keep the last good
    copy on a failed refresh.
-5. **Domains**: `docs/domain-routing-plan.md`. Run its step 1 prototype first (resolver files at 5k scale);
+6. **Domains**: `docs/domain-routing-plan.md`. Run its step 1 prototype first (resolver files at 5k scale);
    it decides whether block lists use the same mechanism. Keep the domain matcher in `internal/rules` and the
    `/etc/resolver` code in `internal/engine/route`, so a later TUN engine can reuse the matcher.
 
