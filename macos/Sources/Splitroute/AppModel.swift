@@ -20,6 +20,7 @@ final class AppModel: ObservableObject {
         Task { [weak self] in
             while let self {
                 await self.refreshStatus()
+                await self.autoInstallIfNeeded()
                 try? await Task.sleep(nanoseconds: Self.pollInterval)
             }
         }
@@ -111,10 +112,37 @@ final class AppModel: ObservableObject {
     /// The daemon binary shipped inside the app bundle.
     private var daemonPath: String? { Bundle.main.path(forResource: "splitroute", ofType: nil) }
 
-    func installService() async { await runPrivileged("install") }
-    func uninstallService() async { await runPrivileged("uninstall") }
+    private static let servicePlist = "/Library/LaunchDaemons/io.github.aliraghebi.splitroute.plist"
+    private static let promptedKey = "autoInstallPromptedVersion"
+    private static let uninstalledKey = "serviceUninstalledByUser"
 
-    private func runPrivileged(_ command: String) async {
+    func installService() async {
+        UserDefaults.standard.removeObject(forKey: Self.uninstalledKey)
+        await runPrivileged("install", prompt: "splitroute needs your password to install its routing service.")
+    }
+
+    func uninstallService() async {
+        UserDefaults.standard.set(true, forKey: Self.uninstalledKey)
+        await runPrivileged("uninstall", prompt: "splitroute needs your password to remove its routing service.")
+    }
+
+    /// Asks for the password without a click: on first launch when the service
+    /// was never installed, and after an app upgrade while the old daemon runs.
+    /// At most once per app version, so a canceled prompt doesn't return on every
+    /// launch. The plist check keeps a daemon that is still starting at login from
+    /// triggering it, and a service the user removed stays removed.
+    private func autoInstallIfNeeded() async {
+        let d = UserDefaults.standard
+        guard !busy, d.string(forKey: Self.promptedKey) != Self.appVersion else { return }
+        let neverInstalled = connError == .notRunning
+            && !FileManager.default.fileExists(atPath: Self.servicePlist)
+            && !d.bool(forKey: Self.uninstalledKey)
+        guard neverInstalled || serviceOutdated else { return }
+        d.set(Self.appVersion, forKey: Self.promptedKey)
+        await installService()
+    }
+
+    private func runPrivileged(_ command: String, prompt: String) async {
         guard let exe = daemonPath else {
             actionError = "The splitroute binary is missing from the app bundle."
             return
@@ -124,7 +152,7 @@ final class AppModel: ObservableObject {
         // `install` points the service at this binary, so it follows app updates
         // as long as the app stays at the same path.
         let shell = "'\(exe.replacingOccurrences(of: "'", with: "'\\''"))' \(command)"
-        let script = "do shell script \"\(shell.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\""))\" with administrator privileges"
+        let script = "do shell script \"\(shell.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\""))\" with prompt \"\(prompt)\" with administrator privileges"
         let result: (Int32, String) = await Task.detached {
             let p = Process()
             p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
