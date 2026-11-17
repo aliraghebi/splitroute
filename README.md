@@ -95,9 +95,6 @@ go run . status
 go run . up --dry-run
 ```
 
-Releases: push a `vX.Y.Z` tag. GoReleaser builds the binaries, publishes the release and updates the cask in
-[aliraghebi/homebrew-tap](https://github.com/aliraghebi/homebrew-tap) (needs the `HOMEBREW_TAP_TOKEN` secret).
-
 ## License
 
 GPL-3.0.
