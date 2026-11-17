@@ -44,14 +44,14 @@ jobs:
         run: |
           v=${GITHUB_REF_NAME#v}
           VERSION=$v macos/build-app.sh
-          ditto -c -k --keepParent macos/build/Splitroute.app "Splitroute_${v}_macos.zip"
+          mv macos/build/Splitroute.dmg "Splitroute_${v}_macos.dmg"
           echo "VERSION=$v" >> "$GITHUB_ENV"
-      - run: gh release upload "$GITHUB_REF_NAME" "Splitroute_${VERSION}_macos.zip"
+      - run: gh release upload "$GITHUB_REF_NAME" "Splitroute_${VERSION}_macos.dmg"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/attest-build-provenance@v2
         with:
-          subject-path: Splitroute_*_macos.zip
-      - run: scripts/update-cask.sh "$VERSION" "Splitroute_${VERSION}_macos.zip"
+          subject-path: Splitroute_*_macos.dmg
+      - run: scripts/update-cask.sh "$VERSION" "Splitroute_${VERSION}_macos.dmg"
         env:
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}

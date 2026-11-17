@@ -48,6 +48,6 @@ goreleaser check
 ## Release
 
 Push a `vX.Y.Z` tag. GoReleaser (`.goreleaser.yaml`) builds the CLI archives for darwin/linux amd64/arm64 and
-publishes the release. The `app` job then builds `Splitroute_<version>_macos.zip`, uploads it and writes the
+publishes the release. The `app` job then builds `Splitroute_<version>_macos.dmg`, uploads it and writes the
 cask to `aliraghebi/homebrew-tap` (`scripts/update-cask.sh`, secret `HOMEBREW_TAP_TOKEN`).
 The app is ad-hoc signed, not notarized (no Apple Developer account).

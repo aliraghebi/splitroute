@@ -24,4 +24,11 @@ rm build/splitroute-arm64 build/splitroute-amd64
 
 codesign --force --sign - "$APP/Contents/Resources/splitroute"
 codesign --force --sign - "$APP"
-echo "$APP"
+
+# Drag-to-install disk image: the app next to an Applications symlink.
+mkdir build/dmg
+cp -R "$APP" build/dmg/
+ln -s /Applications build/dmg/Applications
+hdiutil create -quiet -volname splitroute -srcfolder build/dmg -ov -format UDZO build/Splitroute.dmg
+rm -rf build/dmg
+echo "$APP build/Splitroute.dmg"

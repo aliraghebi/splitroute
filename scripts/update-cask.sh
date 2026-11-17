@@ -1,9 +1,9 @@
 #!/bin/sh
-# Usage: update-cask.sh <version> <app zip>
-# Writes the cask for the app zip and pushes it to aliraghebi/homebrew-tap.
+# Usage: update-cask.sh <version> <app dmg>
+# Writes the cask for the app disk image and pushes it to aliraghebi/homebrew-tap.
 set -eu
-version=$1 zip=$2
-sha=$(shasum -a 256 "$zip" | cut -d' ' -f1)
+version=$1 dmg=$2
+sha=$(shasum -a 256 "$dmg" | cut -d' ' -f1)
 tap=$(mktemp -d)
 git clone --depth 1 "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/aliraghebi/homebrew-tap.git" "$tap"
 sed -e "s/@VERSION@/$version/" -e "s/@SHA256@/$sha/" macos/splitroute.rb.in > "$tap/Casks/splitroute.rb"

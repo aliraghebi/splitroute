@@ -37,16 +37,21 @@ sudo ip route del 2.144.0.0/14
 brew install --cask aliraghebi/tap/splitroute
 ```
 
-This installs **Splitroute.app** (a menu bar app, macOS 13 or later) and the `splitroute` command. Open the app
-and choose **Install Service**: it asks for your administrator password once and starts the service.
+This installs **Splitroute.app** (a menu bar app, macOS 13 or later) and the `splitroute` command. Without
+Homebrew, download `Splitroute_<version>_macos.dmg` from the
+[releases page](https://github.com/aliraghebi/splitroute/releases) and drag the app to Applications.
+
+Open the app: it asks for your administrator password once to install and start the service (and again after
+an update, to restart the service on the new version).
 
 - The menu bar icon shows a green dot when routes are active, red when turned off or the service isn't
   running, and orange when something needs attention.
 - **Settings** lists your lists and their actions, adds release lists, creates custom lists of your own
   addresses, and applies presets. Changes take effect when you click **Apply**.
 - Quitting the app only removes the icon; the service keeps routing until you turn it off or uninstall it.
-- The app is not notarized; the cask removes the quarantine flag so macOS opens it. Without Homebrew, run
-  `xattr -dr com.apple.quarantine /Applications/Splitroute.app` after unzipping.
+- The app is not notarized; the cask removes the quarantine flag so macOS opens it. From the DMG, macOS
+  refuses to open it the first time: run `xattr -dr com.apple.quarantine /Applications/Splitroute.app`, or
+  click **Open Anyway** in System Settings → Privacy & Security.
 
 ### Command line only
 

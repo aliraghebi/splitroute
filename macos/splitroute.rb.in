@@ -3,7 +3,7 @@ cask "splitroute" do
   version "@VERSION@"
   sha256 "@SHA256@"
 
-  url "https://github.com/aliraghebi/splitroute/releases/download/v#{version}/Splitroute_#{version}_macos.zip"
+  url "https://github.com/aliraghebi/splitroute/releases/download/v#{version}/Splitroute_#{version}_macos.dmg"
   name "splitroute"
   desc "Route chosen IP lists outside a VPN (direct) or drop them (block)"
   homepage "https://github.com/aliraghebi/splitroute"
