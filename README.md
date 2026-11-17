@@ -140,11 +140,35 @@ sudo splitroute list remove Office
 Entries already in a list are skipped; one invalid entry rejects the whole command. A custom list holds at
 most 100,000 entries.
 
+### Imports
+
+An import is a list downloaded from an https URL and refreshed by the service (daily by default):
+
+```sh
+sudo splitroute list import Ads https://example.com/hosts.txt block
+sudo splitroute list refresh Ads     # download again now
+splitroute list show Ads             # what the last good download contained
+splitroute status                    # last download time and error per import
+```
+
+- Formats: one entry per line (same syntax as custom lists), hosts files (`0.0.0.0 ads.example.com`: each
+  name is that exact domain), and Surge/Clash domain sets (`.example.com` is the domain and its
+  subdomains, a plain name is exact). `#` and `!` lines are comments. AdGuard/uBlock rules are skipped for
+  now.
+- Invalid lines are skipped and counted. A range broader than /8 (IPv4) or /16 (IPv6) refuses the whole
+  download, and so does a download with no entries or more invalid lines than entries (a login or error
+  page). Limits: 64 MB and 500,000 entries per import.
+- A failed download keeps the last good copy and is retried after 15 minutes.
+- https only, also for redirects. URLs with a user or password are refused: **every local user can read the
+  settings database**, including the URL, so don't put secrets (tokens in the query string either) in it.
+- An import's entries come from its URL: `list add`/`delete` refuse imports. Changing the URL drops the old
+  entries until the new URL is downloaded.
+
 ### Presets
 
 ```sh
 splitroute preset            # show presets
-sudo splitroute preset iran  # replace the release lists with the preset's; custom lists are kept
+sudo splitroute preset iran  # replace the release lists with the preset's; custom lists and imports are kept
 ```
 
 | Preset | Lists |
@@ -157,7 +181,8 @@ sudo splitroute preset iran  # replace the release lists with the preset's; cust
 The service listens on `/var/run/splitroute.sock` (macOS, group `admin`) or `/run/splitroute.sock` (Linux,
 root only): one JSON request per connection, one JSON response. Commands: `status`, `get_config`,
 `set_config`, `set_enabled`, `apply_preset`, `lists`, `presets`, and list edits `list_create`,
-`list_enable`, `list_remove`, `list_rename`, `list_set_action`, `list_move`, `entries_add`, `entries_remove`
+`list_enable`, `list_import`, `list_refresh`, `list_remove`, `list_rename`, `list_set_action`, `list_move`,
+`entries_add`, `entries_remove`
 (see `internal/api/api.go`).
 
 ```sh

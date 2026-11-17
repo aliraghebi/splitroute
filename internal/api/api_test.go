@@ -21,6 +21,7 @@ func (noBackend) UpdateConfig(func(config.Config) (config.Config, error)) (confi
 	panic("unexpected")
 }
 func (noBackend) AvailableLists() ([]string, error) { panic("unexpected") }
+func (noBackend) RefreshImport(string) error        { panic("unexpected") }
 
 func TestHandleSocket(t *testing.T) {
 	srv, cli := net.Pipe()
@@ -38,7 +39,13 @@ func TestHandleSocket(t *testing.T) {
 // (f, then Validate).
 type memBackend struct {
 	noBackend
-	cfg config.Config
+	cfg       config.Config
+	refreshed []string
+}
+
+func (m *memBackend) RefreshImport(name string) error {
+	m.refreshed = append(m.refreshed, name)
+	return nil
 }
 
 func (m *memBackend) LoadConfig() (config.Config, error) { return m.cfg, nil }
@@ -73,6 +80,9 @@ func TestListEditCommands(t *testing.T) {
 		{Request{Cmd: "list_rename", Name: "Work", NewName: "Office"}, true, "telegram:vpn ir-cidr:direct Office:direct"},
 		{Request{Cmd: "list_remove", Name: "ir-cidr"}, true, "telegram:vpn Office:direct"},
 		{Request{Cmd: "list_remove", Name: "ir-cidr"}, false, ""},
+		{Request{Cmd: "list_import", Name: "Ads", Action: "block", URL: "https://example.com/hosts"}, true, "telegram:vpn Office:direct Ads:block"},
+		{Request{Cmd: "list_import", Name: "Ads2", Action: "block", URL: "http://example.com/hosts"}, false, ""},
+		{Request{Cmd: "list_import", Name: "Ads3", Action: "block", URL: "https://u:p@example.com/hosts"}, false, ""},
 	}
 	for _, s := range steps {
 		r := Respond(m, s.req)
@@ -101,6 +111,12 @@ func TestListEditCommands(t *testing.T) {
 	}
 	if got := m.cfg.Lists[1].Entries; len(got) != 1 || got[0] != "AS13335" {
 		t.Fatalf("stored entries %q", got)
+	}
+	if r := Respond(m, Request{Cmd: "list_refresh", Name: "Ads"}); !r.OK || len(m.refreshed) != 1 || r.Config != nil {
+		t.Fatalf("list_refresh: %+v %v", r, m.refreshed)
+	}
+	if r := Respond(m, Request{Cmd: "entries_add", Name: "Ads", Entries: []string{"example.com"}}); r.OK {
+		t.Fatal("entries added to an import")
 	}
 	// A failed edit stores nothing and reports no counts.
 	before := m.cfg

@@ -28,7 +28,7 @@ var Presets = []Preset{
 }
 
 // WithPreset replaces cfg's release lists with the preset's and keeps the
-// custom lists, after them.
+// custom lists and imports, after them.
 func WithPreset(cfg Config, id string) (Config, error) {
 	for _, p := range Presets {
 		if p.ID != id {
@@ -36,7 +36,7 @@ func WithPreset(cfg Config, id string) (Config, error) {
 		}
 		lists := append([]List{}, p.Lists...)
 		for _, l := range cfg.Lists {
-			if l.Custom {
+			if l.Custom || l.Import != nil {
 				lists = append(lists, l)
 			}
 		}

@@ -9,21 +9,66 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net/url"
 	"os"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/aliraghebi/splitroute/internal/fileutil"
 	"github.com/aliraghebi/splitroute/internal/rules"
 )
 
-// List is one routing-rules release list (by its name without ".list"), or a
-// custom list of the user's own entries (see rules.ParseEntry for the syntax).
+// List is one routing-rules release list (by its name without ".list"), a
+// custom list of the user's own entries (see rules.ParseEntry for the
+// syntax), or an import of a third-party list by URL. An import's entries
+// live only in the settings database, never in Config.
 type List struct {
 	Name    string       `json:"name"`
 	Action  rules.Action `json:"action"`
 	Custom  bool         `json:"custom,omitempty"`
 	Entries []string     `json:"entries,omitempty"` // custom lists only: "1.2.3.0/24", "example.com", "full:a.example.com", "AS13335"
+	Import  *Import      `json:"import,omitempty"`
+}
+
+// Import is where an import list comes from.
+type Import struct {
+	URL          string `json:"url"`
+	RefreshHours int    `json:"refresh_hours,omitempty"` // 0: DefaultRefreshHours
+}
+
+const (
+	DefaultRefreshHours = 24
+	MaxRefreshHours     = 7 * 24
+	maxURLLen           = 2048
+)
+
+// Refresh is how often the import is downloaded again.
+func (i Import) Refresh() time.Duration {
+	h := i.RefreshHours
+	if h == 0 {
+		h = DefaultRefreshHours
+	}
+	return time.Duration(h) * time.Hour
+}
+
+// ValidateImportURL accepts https URLs without credentials. The settings
+// database is readable by every local user, so a password in the URL would
+// leak.
+func ValidateImportURL(raw string) error {
+	if len(raw) > maxURLLen {
+		return fmt.Errorf("import URL longer than %d characters", maxURLLen)
+	}
+	u, err := url.Parse(raw)
+	switch {
+	case err != nil:
+		return fmt.Errorf("import URL %q: %v", raw, err)
+	case u.Scheme != "https" || u.Host == "":
+		return fmt.Errorf("import URL %q: must be https://host/...", raw)
+	case u.User != nil:
+		return fmt.Errorf("import URL %q: no user or password in the URL (every local user can read the settings)", u.Redacted())
+	}
+	return nil
 }
 
 // Config is the daemon's configuration. Disabled keeps the service running
@@ -56,7 +101,9 @@ func (c Config) Validate() error {
 		switch {
 		case l.Name == "" || len(l.Name) > maxNameLen || strings.TrimSpace(l.Name) != l.Name:
 			return fmt.Errorf("list name %q: 1-%d characters, no leading or trailing spaces", l.Name, maxNameLen)
-		case !l.Custom && !listName.MatchString(l.Name):
+		case l.Custom && l.Import != nil:
+			return fmt.Errorf("list %q: a list is custom or an import, not both", l.Name)
+		case !l.Custom && l.Import == nil && !listName.MatchString(l.Name):
 			return fmt.Errorf("invalid list name %q", l.Name)
 		case !l.Custom && len(l.Entries) > 0:
 			return fmt.Errorf("list %q: only custom lists have entries", l.Name)
@@ -66,6 +113,14 @@ func (c Config) Validate() error {
 			return fmt.Errorf("list %q listed twice", l.Name)
 		}
 		seen[l.Name] = true
+		if l.Import != nil {
+			if err := ValidateImportURL(l.Import.URL); err != nil {
+				return fmt.Errorf("list %q: %w", l.Name, err)
+			}
+			if h := l.Import.RefreshHours; h < 0 || h > MaxRefreshHours {
+				return fmt.Errorf("list %q: refresh_hours must be 1-%d (0 for the default, %d)", l.Name, MaxRefreshHours, DefaultRefreshHours)
+			}
+		}
 		if len(l.Entries) > MaxEntries {
 			return fmt.Errorf("list %q has %d lines; the limit is %d entries", l.Name, len(l.Entries), MaxEntries)
 		}

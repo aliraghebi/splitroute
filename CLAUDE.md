@@ -11,11 +11,11 @@ and imports, and a redesigned macOS settings app. Later: our own tunnels and mob
 
 | Path | Role |
 |------|------|
-| `cmd/splitroute/` | CLI and the `app`: wiring, `up`/`down` orchestration (`apply.go`), service loop (`watch.go`), install (`service.go`), status printing, settings access, presets and `config export|import` (`config.go`), the `list` command (`listcmd.go`); implements `api.Backend`. Owns `query`/`change`, the only functions that run commands |
+| `cmd/splitroute/` | CLI and the `app`: wiring, `up`/`down` orchestration (`apply.go`), service loop (`watch.go`), install (`service.go`), status printing, settings access, presets and `config export|import` (`config.go`), the `list` command (`listcmd.go`), import downloads (`imports.go`); implements `api.Backend`. Owns `query`/`change`, the only functions that run commands |
 | `internal/rules/` | Pure model: `Action`, typed entries (`entry.go`: CIDR, domain, domain suffix, ASN; `ParseEntry` syntax, floors, reserved ranges), `Route`, `Plan` and the route cap |
 | `internal/config/` | `Config` type, `Validate`, JSON and 0.1 `list = action` parsing (import and first-run migration), presets, pure list edits (`edit.go`: create, enable, remove, rename, action, move, add/remove entries) shared by the CLI and the socket |
-| `internal/store/` | Settings database (SQLite, `modernc.org/sqlite`): schema in `migrations/*.sql` (applied by `PRAGMA user_version`), `Init`/`Config`/`Update` (one transaction), `Changed` (`PRAGMA data_version`) |
-| `internal/lists/` | Download, `SHA256SUMS` check, last-good cache, `.list` parsing into typed entries |
+| `internal/store/` | Settings database (SQLite, `modernc.org/sqlite`): schema in `migrations/*.sql` (applied by `PRAGMA user_version`), `Init`/`Config`/`Update` (one transaction), `Changed` (`PRAGMA data_version`); imports (`imports.go`): state, entries, `SaveDownload`, `MarkChecked`, `Due` |
+| `internal/lists/` | Release lists: download, `SHA256SUMS` check, last-good cache, `.list` parsing. Imports: `ParseText` (entries, hosts files, domain sets; fixtures in `testdata/`), `FetchImport` (conditional GET, limits), `CheckImport` |
 | `internal/state/` | Saved state file and the lock around route changes |
 | `internal/platform/` | OS-specific: command runner types, gateway/VPN detection and parsers, route socket (`netwatch_{darwin,linux}.go`), launchd/systemd files |
 | `internal/engine/route/` | Route-mode engine: diff (`Changes`), per-OS command builders, apply, remove, presence check |
@@ -34,8 +34,13 @@ and imports, and a redesigned macOS settings app. Later: our own tunnels and mob
 - Dependencies point inward: `rules` imports nothing of ours; `cmd/splitroute` is the only place that wires
   packages together. `internal/` packages never import `cmd/`.
 - Never weaken the safety checks: ranges broader than /8 (IPv4) or /16 (IPv6) are refused, reserved ranges
-  are skipped, domains pass `rules.DomainEntry` (they become file names), the route count is capped, lists
-  must match `SHA256SUMS`, and `down` removes exactly what `up` added.
+  are skipped, domains pass `rules.DomainEntry` (they become file names), the route count is capped, release
+  lists must match `SHA256SUMS`, and `down` removes exactly what `up` added.
+- Imports have no checksum, so: https only (redirects too), no credentials in URLs (the database is
+  world-readable), 64 MB / 500k entries, a too-broad range refuses the whole download, `lists.CheckImport`
+  refuses empty or mostly-invalid downloads, and entries are replaced only by a complete, parsed download in
+  one transaction (`store.SaveDownload`, guarded by the URL it came from). A failure keeps the last good copy.
+  Only `canWrite` processes download; dry-run never does.
 - Settings live only in the database (`<state dir>/splitroute.db`, 0644, rollback journal: non-root readers
   must keep working, so no WAL). Every write goes through `store.Update`/`Init`, which run `Config.Validate`
   in the same transaction; reads validate too. Writers: the daemon (socket requests) and root CLI commands;

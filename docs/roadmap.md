@@ -80,12 +80,9 @@ Policy = ordered [{list, action}]      action: direct | block | vpn
 4. **ASN**: routing-rules publishes per-ASN CIDR lists at build time from public BGP data (separate repo
    change). The client treats them as CIDR lists: offline, `SHA256SUMS`-checked. `AS12345` typed in a user
    list resolves via the routing-rules index, never a live third-party API from a root daemon.
-5. **Imports** (URL or file): plain text and hosts files first, then AdGuard/uBlock (domain rules only),
-   Clash rule-provider YAML, sing-box `.srs`, v2ray `geoip.dat`/`geosite.dat`. One parser per format,
-   fixtures from real files.
-   Imports have no `SHA256SUMS`, so they get their own checks, written into CLAUDE.md when they land: HTTPS
-   only, size cap, entry cap, the same /8 and reserved-range checks, the same route cap, keep the last good
-   copy on a failed refresh.
+5. **Imports**: done for plain text (entries, hosts files, Surge/Clash domain sets). Next formats, one
+   parser each with real fixtures: AdGuard/uBlock (domain rules only), Clash rule-provider YAML, sing-box
+   `.srs`, v2ray `geoip.dat`/`geosite.dat`. Safety rules are in CLAUDE.md.
 6. **Domains**: `docs/domain-routing-plan.md`. Run its step 1 prototype first (resolver files at 5k scale);
    it decides whether block lists use the same mechanism. Keep the domain matcher in `internal/rules` and the
    `/etc/resolver` code in `internal/engine/route`, so a later TUN engine can reuse the matcher.

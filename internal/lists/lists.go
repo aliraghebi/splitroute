@@ -56,15 +56,9 @@ func Parse(b []byte) (rules.Entries, Stats, error) {
 			if err != nil || p.Addr().Is4() != (typ == "IP-CIDR") {
 				return rules.Entries{}, st, fmt.Errorf("bad %s line %q", typ, line)
 			}
-			p = p.Masked()
-			if floor := rules.Floor(p.Addr()); p.Bits() < floor {
-				return rules.Entries{}, st, fmt.Errorf("refusing %s: broader than /%d", p, floor)
+			if err := addPrefix(&es, &st, p); err != nil {
+				return rules.Entries{}, st, err
 			}
-			if rules.IsReserved(p) {
-				st.Reserved++
-				continue
-			}
-			es.Add(rules.Entry{Kind: rules.CIDR, Prefix: p})
 		case "DOMAIN", "DOMAIN-SUFFIX":
 			kind := rules.Domain
 			if typ == "DOMAIN-SUFFIX" {
@@ -81,6 +75,22 @@ func Parse(b []byte) (rules.Entries, Stats, error) {
 		}
 	}
 	return es, st, sc.Err()
+}
+
+// addPrefix adds a range from a downloaded list. Broader than the /8 or /16
+// floor is an error for the whole list (a poisoned list must not hijack a
+// large share of all traffic); a reserved range is skipped and counted.
+func addPrefix(es *rules.Entries, st *Stats, p netip.Prefix) error {
+	p = p.Masked()
+	if floor := rules.Floor(p.Addr()); p.Bits() < floor {
+		return fmt.Errorf("refusing %s: broader than /%d", p, floor)
+	}
+	if rules.IsReserved(p) {
+		st.Reserved++
+		return nil
+	}
+	es.Add(rules.Entry{Kind: rules.CIDR, Prefix: p})
+	return nil
 }
 
 // parseSums reads a sha256sum file into file name → hex digest.

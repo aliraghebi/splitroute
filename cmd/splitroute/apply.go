@@ -5,6 +5,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -35,6 +36,18 @@ func (a *app) want() ([]rules.Route, []string, error) {
 	for _, l := range cfg.Lists {
 		switch {
 		case l.Action == rules.VPN:
+		case l.Import != nil:
+			es, w, err := a.importEntries(l.Name)
+			if err != nil {
+				return nil, warn, err
+			}
+			if w != "" {
+				warn = append(warn, w)
+			}
+			byList[l.Name] = es.V4
+			if es.Unrouted() != "" && len(es.V4) == 0 {
+				warn = append(warn, fmt.Sprintf("%s has no routable IPv4 ranges (%s)", l.Name, es.Unrouted()))
+			}
 		case l.Custom:
 			es, err := rules.ParseEntries(l.Entries)
 			if err != nil {
@@ -67,6 +80,38 @@ func (a *app) want() ([]rules.Route, []string, error) {
 	return routes, warn, err
 }
 
+// importEntries reads an import's downloaded entries, with a warning when
+// it has none yet or its last download failed.
+func (a *app) importEntries(name string) (rules.Entries, string, error) {
+	s, err := a.settings()
+	if err != nil {
+		return rules.Entries{}, "", err
+	}
+	if s == nil {
+		return rules.Entries{}, fmt.Sprintf("import %s: not downloaded yet (run `sudo splitroute up`)", name), nil
+	}
+	es, err := s.ImportEntries(name)
+	if err != nil {
+		return rules.Entries{}, "", err
+	}
+	sts, err := s.Imports()
+	if err != nil {
+		return rules.Entries{}, "", err
+	}
+	for _, st := range sts {
+		switch {
+		case st.Name != name:
+		case st.FetchedAt.IsZero() && st.LastError != "":
+			return es, fmt.Sprintf("import %s: not downloaded: %s", name, st.LastError), nil
+		case st.FetchedAt.IsZero():
+			return es, fmt.Sprintf("import %s: not downloaded yet", name), nil
+		case st.LastError != "":
+			return es, fmt.Sprintf("import %s: last download failed (%s); using the copy from %s", name, st.LastError, st.FetchedAt.Local().Format(time.DateTime)), nil
+		}
+	}
+	return es, "", nil
+}
+
 // skipped describes what a release list had besides routable IPv4 ranges.
 func skipped(es rules.Entries, st lists.Stats) string {
 	parts := []string{}
@@ -92,7 +137,9 @@ func (a *app) gateway() (platform.Gateway, error) { return platform.DetectGatewa
 // up downloads the lists and moves the system from the saved state to the
 // planned routes. It returns the new state.
 func (a *app) up(force bool) (state.State, error) {
+	iwarn := a.refreshImports(context.Background())
 	want, warn, err := a.want()
+	warn = append(iwarn, warn...)
 	for _, w := range warn {
 		log.Print("warning: ", w)
 	}

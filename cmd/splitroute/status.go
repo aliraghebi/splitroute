@@ -36,6 +36,16 @@ func (a *app) Status() (api.Status, error) {
 	a.errMu.Lock()
 	s.Error = a.lastErr
 	a.errMu.Unlock()
+	if db, err := a.settings(); err == nil && db != nil {
+		sts, err := db.Imports()
+		if err != nil {
+			return s, err
+		}
+		for _, st := range sts {
+			s.Imports = append(s.Imports, api.ImportStatus{Name: st.Name, URL: st.URL, Entries: st.Entries, Skipped: st.Skipped,
+				FetchedAt: st.FetchedAt, CheckedAt: st.CheckedAt, Error: st.LastError})
+		}
+	}
 	return s, nil
 }
 
@@ -56,6 +66,19 @@ func (a *app) printStatus() error {
 	}
 	if !s.Enabled {
 		fmt.Println("enabled:   no (turned off in the config)")
+	}
+	for _, im := range s.Imports {
+		switch {
+		case im.FetchedAt.IsZero() && im.Error != "":
+			fmt.Printf("import:    %s: not downloaded: %s\n", im.Name, im.Error)
+		case im.FetchedAt.IsZero():
+			fmt.Printf("import:    %s: not downloaded yet\n", im.Name)
+		default:
+			fmt.Printf("import:    %s: %d entries from %s\n", im.Name, im.Entries, im.FetchedAt.Local().Format(time.DateTime))
+			if im.Error != "" {
+				fmt.Printf("           last download failed: %s\n", im.Error)
+			}
+		}
 	}
 	if s.Routes == 0 {
 		fmt.Println("routes:    none (run `sudo splitroute up`)")

@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"os"
 	"runtime"
 	"strings"
@@ -100,16 +101,17 @@ func main() {
 // system state); change is replaced by a printer in dry-run mode. They are the
 // only way anything here touches the system.
 type app struct {
-	goos     string
-	cfgPath  string // the old config file: imported into the database on the first root run
-	dry      bool
-	canWrite bool // may open the settings database read-write (root, not dry-run)
-	query    platform.QueryFunc
-	change   platform.ChangeFunc
-	state    state.Store
-	routes   route.Engine
-	stdin    io.Reader // list add/delete -
-	stdout   io.Writer
+	goos       string
+	cfgPath    string // the old config file: imported into the database on the first root run
+	dry        bool
+	canWrite   bool // may open the settings database read-write (root, not dry-run)
+	query      platform.QueryFunc
+	change     platform.ChangeFunc
+	state      state.Store
+	routes     route.Engine
+	stdin      io.Reader // list add/delete -
+	stdout     io.Writer
+	httpClient *http.Client // imports
 
 	dbMu    sync.Mutex
 	db      *store.Store  // opened on first use by settings()
@@ -120,7 +122,7 @@ type app struct {
 
 func newApp(goos, cfgPath string, dry bool) *app {
 	a := &app{goos: goos, cfgPath: cfgPath, dry: dry, canWrite: !dry && os.Geteuid() == 0, query: platform.ExecQuery, change: platform.ExecChange,
-		stdin: os.Stdin, stdout: os.Stdout}
+		stdin: os.Stdin, stdout: os.Stdout, httpClient: lists.ImportClient}
 	a.state = state.Store{Dir: state.DefaultDir(goos), Dry: dry}
 	if dry {
 		a.change = func(name string, args []string, stdin string) error {

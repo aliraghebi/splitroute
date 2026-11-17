@@ -107,7 +107,7 @@ struct SettingsView: View {
         } header: {
             Text("Preset")
         } footer: {
-            Text("A preset replaces the release lists. Your custom lists are kept.")
+            Text("A preset replaces the release lists. Your custom lists and imports are kept.")
                 .font(.caption).foregroundStyle(.secondary)
         }
         .confirmationDialog("Apply this preset?", isPresented: $confirmPreset) {
@@ -211,7 +211,13 @@ struct SettingsView: View {
     }
 
     private func subtitle(_ l: RouteList) -> String {
-        var parts = [l.custom ? "Custom, \(l.entries.count) \(l.entries.count == 1 ? "entry" : "entries")" : "Release list"]
+        var parts: [String]
+        if l.importSource != nil {
+            let st = model.status?.imports?.first(where: { $0.name == l.name })
+            parts = [st.map { "Import, \($0.entries.formatted()) entries" + ($0.error != nil ? " (last download failed)" : "") } ?? "Import"]
+        } else {
+            parts = [l.custom ? "Custom, \(l.entries.count) \(l.entries.count == 1 ? "entry" : "entries")" : "Release list"]
+        }
         if let n = model.status?.lists.first(where: { $0.name == l.name })?.routes {
             parts.append("\(n.formatted()) routes applied")
         }

@@ -24,6 +24,18 @@ type Status struct {
 	Missing      bool              `json:"missing"` // saved routes are gone from the routing table
 	Warnings     []string          `json:"warnings,omitempty"`
 	Error        string            `json:"error,omitempty"` // service only: the last apply failed
+	Imports      []ImportStatus    `json:"imports,omitempty"`
+}
+
+// ImportStatus is an import's download state.
+type ImportStatus struct {
+	Name      string    `json:"name"`
+	URL       string    `json:"url"`
+	Entries   int       `json:"entries"`
+	Skipped   int       `json:"skipped,omitempty"` // lines in the last download that were skipped
+	FetchedAt time.Time `json:"fetched_at,omitzero"`
+	CheckedAt time.Time `json:"checked_at,omitzero"`
+	Error     string    `json:"error,omitempty"` // last attempt failed; the entries are from FetchedAt
 }
 
 // ListCount is how many routes a list contributed.

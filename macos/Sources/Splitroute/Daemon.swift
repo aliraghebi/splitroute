@@ -19,7 +19,14 @@ struct RouteList: Codable, Hashable, Identifiable {
     var action: Action
     var custom = false
     var entries: [String] = []
+    /// Set for a list downloaded from a URL. Its entries live in the daemon's
+    /// database, never in the config. Must survive set_config round trips.
+    var importSource: ImportSource?
     var id: String { name }
+
+    enum CodingKeys: String, CodingKey {
+        case name, action, custom, entries, importSource = "import"
+    }
 
     init(name: String, action: Action, custom: Bool = false, entries: [String] = []) {
         self.name = name
@@ -34,6 +41,39 @@ struct RouteList: Codable, Hashable, Identifiable {
         action = try c.decode(Action.self, forKey: .action)
         custom = try c.decodeIfPresent(Bool.self, forKey: .custom) ?? false
         entries = try c.decodeIfPresent([String].self, forKey: .entries) ?? []
+        importSource = try c.decodeIfPresent(ImportSource.self, forKey: .importSource)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(name, forKey: .name)
+        try c.encode(action, forKey: .action)
+        if custom { try c.encode(custom, forKey: .custom) }
+        if !entries.isEmpty { try c.encode(entries, forKey: .entries) }
+        try c.encodeIfPresent(importSource, forKey: .importSource)
+    }
+}
+
+struct ImportSource: Codable, Hashable {
+    var url: String
+    var refreshHours: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case url, refreshHours = "refresh_hours"
+    }
+}
+
+struct ImportStatus: Decodable, Equatable {
+    var name: String
+    var url: String
+    var entries: Int
+    var skipped: Int?
+    var fetchedAt: String?
+    var checkedAt: String?
+    var error: String?
+
+    enum CodingKeys: String, CodingKey {
+        case name, url, entries, skipped, fetchedAt = "fetched_at", checkedAt = "checked_at", error
     }
 }
 
@@ -79,9 +119,10 @@ struct Status: Decodable, Equatable {
     var missing: Bool
     var warnings: [String]?
     var error: String?
+    var imports: [ImportStatus]?
 
     enum CodingKeys: String, CodingKey {
-        case version, enabled, gateway, gatewayError = "gateway_error", vpn, routes, lists, fetched, missing, warnings, error
+        case version, enabled, gateway, gatewayError = "gateway_error", vpn, routes, lists, fetched, missing, warnings, error, imports
     }
 }
 

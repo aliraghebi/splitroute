@@ -321,7 +321,8 @@ func read(tx *sql.Tx) (config.Config, error) {
 		return config.Config{}, err
 	}
 	cfg.Disabled = disabled == 1
-	rows, err := tx.Query("SELECT id, name, source, action, note FROM lists ORDER BY position, id")
+	rows, err := tx.Query(`SELECT l.id, l.name, l.source, l.action, l.note, i.url, i.refresh_hours
+		FROM lists l LEFT JOIN import_sources i ON i.list_id = l.id ORDER BY l.position, l.id`)
 	if err != nil {
 		return config.Config{}, err
 	}
@@ -331,11 +332,20 @@ func read(tx *sql.Tx) (config.Config, error) {
 		var id int64
 		var l config.List
 		var source, note string
-		if err := rows.Scan(&id, &l.Name, &source, &l.Action, &note); err != nil {
+		var url sql.NullString
+		var refresh sql.NullInt64
+		if err := rows.Scan(&id, &l.Name, &source, &l.Action, &note, &url, &refresh); err != nil {
 			rows.Close()
 			return config.Config{}, err
 		}
-		l.Custom = source == "custom"
+		switch source {
+		case "custom":
+			l.Custom = true
+		case "import":
+			l.Import = &config.Import{URL: url.String, RefreshHours: int(refresh.Int64)}
+			cfg.Lists = append(cfg.Lists, l) // entries stay in the database
+			continue
+		}
 		idx[id] = len(cfg.Lists)
 		notes[id] = note
 		cfg.Lists = append(cfg.Lists, l)
@@ -390,19 +400,23 @@ func (s *Store) write(tx *sql.Tx, cfg config.Config) error {
 	if _, err := tx.Exec("UPDATE settings SET base_url = ?, disabled = ? WHERE id = 1", cfg.BaseURL, boolInt(cfg.Disabled)); err != nil {
 		return err
 	}
-	existing := map[string]int64{}
-	rows, err := tx.Query("SELECT id, name FROM lists")
+	type stored struct {
+		id     int64
+		source string
+	}
+	existing := map[string]stored{}
+	rows, err := tx.Query("SELECT id, name, source FROM lists")
 	if err != nil {
 		return err
 	}
 	for rows.Next() {
-		var id int64
+		var st stored
 		var name string
-		if err := rows.Scan(&id, &name); err != nil {
+		if err := rows.Scan(&st.id, &name, &st.source); err != nil {
 			rows.Close()
 			return err
 		}
-		existing[name] = id
+		existing[name] = st
 	}
 	if err := closeRows(rows); err != nil {
 		return err
@@ -414,22 +428,35 @@ func (s *Store) write(tx *sql.Tx, cfg config.Config) error {
 	defer ins.Close()
 	for pos, l := range cfg.Lists {
 		source := "release"
-		if l.Custom {
+		switch {
+		case l.Custom:
 			source = "custom"
+		case l.Import != nil:
+			source = "import"
 		}
 		ents, listNote, err := toRows(l.Entries)
 		if err != nil {
 			return fmt.Errorf("list %q: %w", l.Name, err)
 		}
-		id, ok := existing[l.Name]
+		old, ok := existing[l.Name]
+		id := old.id
 		if ok {
 			delete(existing, l.Name)
 			if _, err := tx.Exec("UPDATE lists SET source = ?, action = ?, position = ?, note = ?, updated_at = ? WHERE id = ?",
 				source, l.Action, pos, listNote, now, id); err != nil {
 				return err
 			}
-			if _, err := tx.Exec("DELETE FROM entries WHERE list_id = ?", id); err != nil {
-				return err
+			// An import's entries come from its downloads; keep them unless
+			// the list just became an import.
+			if source != "import" || old.source != "import" {
+				if _, err := tx.Exec("DELETE FROM entries WHERE list_id = ?", id); err != nil {
+					return err
+				}
+			}
+			if source != "import" && old.source == "import" {
+				if _, err := tx.Exec("DELETE FROM import_sources WHERE list_id = ?", id); err != nil {
+					return err
+				}
 			}
 		} else {
 			res, err := tx.Exec("INSERT INTO lists (name, source, action, position, note, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -441,18 +468,49 @@ func (s *Store) write(tx *sql.Tx, cfg config.Config) error {
 				return err
 			}
 		}
+		if source == "import" {
+			if err := writeImport(tx, id, *l.Import); err != nil {
+				return err
+			}
+			continue
+		}
 		for i, e := range ents {
 			if _, err := ins.Exec(id, i, string(e.Kind), e.value, e.note); err != nil {
 				return err
 			}
 		}
 	}
-	for _, id := range existing {
+	for _, old := range existing {
+		id := old.id
 		if _, err := tx.Exec("DELETE FROM lists WHERE id = ?", id); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// writeImport records where an import comes from. A new URL drops the old
+// entries and download state: entries from another source would be
+// misleading, so the list routes nothing until the new URL is downloaded.
+func writeImport(tx *sql.Tx, id int64, im config.Import) error {
+	var url string
+	err := tx.QueryRow("SELECT url FROM import_sources WHERE list_id = ?", id).Scan(&url)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		_, err = tx.Exec("INSERT INTO import_sources (list_id, url, refresh_hours) VALUES (?, ?, ?)", id, im.URL, im.RefreshHours)
+		return err
+	case err != nil:
+		return err
+	case url != im.URL:
+		if _, err := tx.Exec("DELETE FROM entries WHERE list_id = ?", id); err != nil {
+			return err
+		}
+		_, err = tx.Exec(`UPDATE import_sources SET url = ?, refresh_hours = ?, etag = '', last_modified = '', sha256 = '',
+			fetched_at = '', checked_at = '', last_error = '', force = 0, skipped = 0 WHERE list_id = ?`, im.URL, im.RefreshHours, id)
+		return err
+	}
+	_, err = tx.Exec("UPDATE import_sources SET refresh_hours = ? WHERE list_id = ?", im.RefreshHours, id)
+	return err
 }
 
 type row struct {

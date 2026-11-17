@@ -117,12 +117,7 @@ func (a *app) UpdateConfig(f func(config.Config) (config.Config, error)) (config
 	if err != nil {
 		return config.Config{}, err
 	}
-	if a.reload != nil {
-		select {
-		case a.reload <- struct{}{}:
-		default: // a reload is already pending
-		}
-	}
+	a.wake()
 	return cfg, nil
 }
 

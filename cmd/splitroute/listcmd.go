@@ -12,9 +12,11 @@ import (
 	"log"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/aliraghebi/splitroute/internal/config"
 	"github.com/aliraghebi/splitroute/internal/rules"
+	"github.com/aliraghebi/splitroute/internal/store"
 )
 
 const listUsage = `usage:
@@ -22,6 +24,10 @@ const listUsage = `usage:
   splitroute list show <name>                  print a custom list's entries
   splitroute list create <name> [action]       new custom list (action: direct, block or vpn; default direct)
   splitroute list enable <release> [action]    add a release list (see splitroute lists)
+  splitroute list import <name> <url> [action] add a list downloaded from an https URL (one entry per
+                                               line, hosts files and domain sets); the service downloads
+                                               it and refreshes it daily
+  splitroute list refresh <name>               download an import again now
   splitroute list remove <name>
   splitroute list rename <name> <new name>     custom lists only
   splitroute list action <name> <action>
@@ -62,6 +68,21 @@ func (a *app) listCmd(args []string) error {
 		}
 		return a.editLists(func(c config.Config) (config.Config, error) { return op(c, rest[0], action(1)) },
 			fmt.Sprintf("list %s added (%s)", rest[0], action(1)))
+	case "import":
+		if err := need(2, 3); err != nil {
+			return err
+		}
+		return a.editLists(func(c config.Config) (config.Config, error) { return config.ImportList(c, rest[0], action(2), rest[1]) },
+			fmt.Sprintf("import %s added (%s); the service downloads it now (or run `sudo splitroute up`)", rest[0], action(2)))
+	case "refresh":
+		if err := need(1, 1); err != nil {
+			return err
+		}
+		if err := a.RefreshImport(rest[0]); err != nil {
+			return err
+		}
+		log.Printf("import %s: the service downloads it within %s (or run `sudo splitroute up`)", rest[0], checkEvery)
+		return nil
 	case "remove":
 		if err := need(1, 1); err != nil {
 			return err
@@ -172,14 +193,36 @@ func (a *app) printConfiguredLists() error {
 	if cfg.Disabled {
 		fmt.Fprintln(a.stdout, "turned off: no list is routed until it is turned back on")
 	}
+	imports := map[string]store.ImportState{}
+	if s, err := a.settings(); err == nil && s != nil {
+		sts, err := s.Imports()
+		if err != nil {
+			return err
+		}
+		for _, st := range sts {
+			imports[st.Name] = st
+		}
+	}
 	for i, l := range cfg.Lists {
-		fmt.Fprintf(a.stdout, "%3d  %-6s  %-20s  %s\n", i+1, l.Action, l.Name, describe(l))
+		fmt.Fprintf(a.stdout, "%3d  %-6s  %-20s  %s\n", i+1, l.Action, l.Name, describe(l, imports[l.Name]))
 	}
 	return nil
 }
 
-// describe is a list's kind and, for custom lists, its entry counts.
-func describe(l config.List) string {
+// describe is a list's kind and its entry counts (custom lists) or download
+// state (imports).
+func describe(l config.List, im store.ImportState) string {
+	if l.Import != nil {
+		switch {
+		case im.FetchedAt.IsZero() && im.LastError != "":
+			return "import, not downloaded: " + im.LastError
+		case im.FetchedAt.IsZero():
+			return "import, not downloaded yet"
+		case im.LastError != "":
+			return fmt.Sprintf("import: %d entries from %s; last download failed: %s", im.Entries, im.FetchedAt.Local().Format(time.DateTime), im.LastError)
+		}
+		return fmt.Sprintf("import: %d entries from %s", im.Entries, im.FetchedAt.Local().Format(time.DateTime))
+	}
 	if !l.Custom {
 		return "release"
 	}
@@ -209,6 +252,9 @@ func (a *app) printEntries(name string) error {
 		if l.Name != name {
 			continue
 		}
+		if l.Import != nil {
+			return a.printImportEntries(name)
+		}
 		if !l.Custom {
 			return fmt.Errorf("%q is a release list; its entries come from the release (%s/%s.list)", name, cfg.ListsURL(), name)
 		}
@@ -218,4 +264,32 @@ func (a *app) printEntries(name string) error {
 		return nil
 	}
 	return fmt.Errorf("no list named %q", name)
+}
+
+func (a *app) printImportEntries(name string) error {
+	s, err := a.settings()
+	if err != nil {
+		return err
+	}
+	if s == nil {
+		return fmt.Errorf("import %q is not downloaded yet", name)
+	}
+	es, err := s.ImportEntries(name)
+	if err != nil {
+		return err
+	}
+	w := bufio.NewWriter(a.stdout)
+	for _, p := range append(es.V4, es.V6...) {
+		fmt.Fprintln(w, rules.Entry{Kind: rules.CIDR, Prefix: p})
+	}
+	for _, d := range es.Domains {
+		fmt.Fprintln(w, "full:"+d)
+	}
+	for _, d := range es.Suffixes {
+		fmt.Fprintln(w, d)
+	}
+	for _, as := range es.ASNs {
+		fmt.Fprintln(w, rules.Entry{Kind: rules.ASN, AS: as})
+	}
+	return w.Flush()
 }

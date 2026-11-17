@@ -22,6 +22,8 @@
 //	{"cmd": "list_move", "name": "Work", "position": 0}              0-based
 //	{"cmd": "entries_add", "name": "Work", "entries": ["example.com"]}
 //	{"cmd": "entries_remove", "name": "Work", "entries": ["example.com"]}
+//	{"cmd": "list_import", "name": "Ads", "action": "block", "url": "https://…"}   downloaded by the service
+//	{"cmd": "list_refresh", "name": "Ads"}                                         download now → no config
 package api
 
 import (
@@ -48,6 +50,8 @@ type Backend interface {
 	// applies it.
 	UpdateConfig(f func(config.Config) (config.Config, error)) (config.Config, error)
 	AvailableLists() ([]string, error)
+	// RefreshImport marks an import to be downloaded on the next pass.
+	RefreshImport(name string) error
 }
 
 type Request struct {
@@ -62,6 +66,7 @@ type Request struct {
 	Action   rules.Action `json:"action,omitempty"`
 	Position *int         `json:"position,omitempty"`
 	Entries  []string     `json:"entries,omitempty"`
+	URL      string       `json:"url,omitempty"`
 }
 
 type Response struct {
@@ -168,7 +173,12 @@ func Respond(b Backend, req Request) Response {
 		r.Lists, err = b.AvailableLists()
 	case "presets":
 		r.Presets = config.Presets
-	case "list_create", "list_enable", "list_remove", "list_rename", "list_set_action", "list_move", "entries_add", "entries_remove":
+	case "list_refresh":
+		if req.Name == "" {
+			return Response{Error: "list_refresh needs a name"}
+		}
+		err = b.RefreshImport(req.Name)
+	case "list_import", "list_create", "list_enable", "list_remove", "list_rename", "list_set_action", "list_move", "entries_add", "entries_remove":
 		var edit func(config.Config) (config.Config, error)
 		if edit, err = listEdit(req, &r); err == nil {
 			r.Config, err = update(b, edit)
@@ -202,6 +212,10 @@ func listEdit(req Request, r *Response) (func(config.Config) (config.Config, err
 		return func(c config.Config) (config.Config, error) { return config.CreateList(c, req.Name, req.Action) }, nil
 	case "list_enable":
 		return func(c config.Config) (config.Config, error) { return config.EnableRelease(c, req.Name, req.Action) }, nil
+	case "list_import":
+		return func(c config.Config) (config.Config, error) {
+			return config.ImportList(c, req.Name, req.Action, req.URL)
+		}, nil
 	case "list_remove":
 		return func(c config.Config) (config.Config, error) { return config.RemoveList(c, req.Name) }, nil
 	case "list_rename":

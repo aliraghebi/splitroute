@@ -52,7 +52,13 @@ func EnableRelease(c Config, name string, a rules.Action) (Config, error) {
 	return c.add(List{Name: name, Action: a})
 }
 
-// RemoveList removes a list, custom or release.
+// ImportList appends an import of the list at url. It is downloaded by the
+// service (or the next `up`).
+func ImportList(c Config, name string, a rules.Action, url string) (Config, error) {
+	return c.add(List{Name: name, Action: a, Import: &Import{URL: url}})
+}
+
+// RemoveList removes a list of any kind.
 func RemoveList(c Config, name string) (Config, error) {
 	c, i, err := c.find(name)
 	if err != nil {
@@ -63,14 +69,14 @@ func RemoveList(c Config, name string) (Config, error) {
 }
 
 // RenameList renames a list. Release lists are named by the release, so only
-// custom lists can be renamed.
+// custom lists and imports can be renamed.
 func RenameList(c Config, name, newName string) (Config, error) {
 	c, i, err := c.find(name)
 	if err != nil {
 		return c, err
 	}
-	if !c.Lists[i].Custom {
-		return c, fmt.Errorf("%q is a release list; only custom lists can be renamed", name)
+	if !c.Lists[i].Custom && c.Lists[i].Import == nil {
+		return c, fmt.Errorf("%q is a release list; only custom lists and imports can be renamed", name)
 	}
 	if newName != name && c.index(newName) >= 0 {
 		return c, fmt.Errorf("list %q already exists", newName)
@@ -113,7 +119,11 @@ type EntryEdit struct {
 
 func (c Config) custom(name string) (Config, int, error) {
 	c, i, err := c.find(name)
-	if err == nil && !c.Lists[i].Custom {
+	switch {
+	case err != nil:
+	case c.Lists[i].Import != nil:
+		err = fmt.Errorf("%q is an import; its entries come from %s", name, c.Lists[i].Import.URL)
+	case !c.Lists[i].Custom:
 		err = fmt.Errorf("%q is a release list; entries can only be changed in custom lists", name)
 	}
 	return c, i, err

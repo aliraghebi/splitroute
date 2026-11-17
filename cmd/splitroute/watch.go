@@ -76,7 +76,7 @@ func (a *app) watch() error {
 		case <-t.C:
 		}
 		a.warnStaleFile(&staleWarned)
-		if a.settingsChanged() || time.Since(st.Fetched) > refreshEvery {
+		if a.settingsChanged() || time.Since(st.Fetched) > refreshEvery || a.importsDue() {
 			refresh()
 			continue
 		}
