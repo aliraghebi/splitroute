@@ -110,8 +110,8 @@ in place so an older splitroute still finds it. The JSON format:
 - `direct`: through your normal connection, outside the VPN. `block`: dropped. `vpn`: left alone.
 - A release list is named as in `splitroute lists`. A custom list has any name and your own entries:
   addresses or ranges (`203.0.113.7`, `198.51.100.0/24`, `2400:cb00::/32`), domains with their subdomains
-  (`example.com`), exact names (`full:www.example.com`) or AS numbers (`AS13335`). Only IPv4 is routed for
-  now; the rest is validated and kept for domain and ASN routing.
+  (`example.com`), exact names (`full:www.example.com`) or AS numbers (`AS13335`: every range that AS
+  announces, see below). Only IPv4 is routed for now; domains and IPv6 are validated and kept for later.
 - `"disabled": true` removes the routes but keeps the service running.
 - `"base_url"` overrides the release URL (https only).
 - `config import` also reads the 0.1 format (`ir-cidr = direct` lines).
@@ -164,6 +164,15 @@ splitroute status                    # last download time and error per import
   settings database**, including the URL, so don't put secrets (tokens in the query string either) in it.
 - An import's entries come from its URL: `list add`/`delete` refuse imports. Changing the URL drops the old
   entries until the new URL is downloaded.
+
+### AS numbers
+
+`AS13335` in a custom list or an import routes every IPv4 range that AS announces in BGP. The ranges come
+from `asn.txt.gz` in the routing-rules release (built daily from [iptoasn.com](https://iptoasn.com), public
+domain), checked against `SHA256SUMS` like the lists and cached; nothing is looked up live. The file
+(about 3 MB) is only downloaded when a list has an AS number. An AS that announces nothing gets a warning;
+a range broader than /8 refuses the file. Big networks have many ranges (Chinanet: about 15,000), which
+count against the 20,000 route cap.
 
 ### Presets
 

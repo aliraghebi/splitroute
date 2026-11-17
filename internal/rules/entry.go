@@ -221,8 +221,5 @@ func (es Entries) Unrouted() string {
 	if n := len(es.V6); n > 0 {
 		parts = append(parts, fmt.Sprintf("%d IPv6", n))
 	}
-	if n := len(es.ASNs); n > 0 {
-		parts = append(parts, fmt.Sprintf("%d AS numbers", n))
-	}
 	return strings.Join(parts, ", ")
 }

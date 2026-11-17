@@ -237,6 +237,9 @@ func describe(l config.List, im store.ImportState) string {
 	if u := es.Unrouted(); u != "" {
 		parts = append(parts, u)
 	}
+	if n := len(es.ASNs); n > 0 {
+		parts = append(parts, fmt.Sprintf("%d AS numbers", n))
+	}
 	if len(parts) == 0 {
 		return "custom, empty"
 	}

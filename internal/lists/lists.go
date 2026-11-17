@@ -105,7 +105,8 @@ func parseSums(b []byte) map[string]string {
 	return m
 }
 
-var client = &http.Client{Timeout: 60 * time.Second}
+// Client downloads release files; tests replace it.
+var Client = &http.Client{Timeout: 60 * time.Second}
 
 func httpGet(url string) ([]byte, error) {
 	req, err := http.NewRequest(http.MethodGet, url, nil)
@@ -113,7 +114,7 @@ func httpGet(url string) ([]byte, error) {
 		return nil, err
 	}
 	req.Header.Set("User-Agent", UserAgent)
-	resp, err := client.Do(req)
+	resp, err := Client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -138,33 +139,49 @@ func Fetch(base, cacheDir string, names []string, save bool) (map[string][]byte,
 	out := map[string][]byte{}
 	for _, n := range names {
 		file := n + ".list"
-		cached := filepath.Join(cacheDir, file)
-		var err error
-		if sums == nil {
-			err = errors.New("no checksums")
-		} else if want, ok := sums[file]; !ok {
-			return nil, warn, fmt.Errorf("unknown list %q (run `splitroute lists`)", n)
-		} else if b, gerr := httpGet(base + "/" + file); gerr != nil {
-			err = gerr
-		} else if got := sha256.Sum256(b); hex.EncodeToString(got[:]) != want {
-			err = errors.New("checksum mismatch")
-		} else {
-			out[n] = b
-			if save {
-				if werr := fileutil.WriteAtomic(cached, b); werr != nil {
-					warn = append(warn, fmt.Sprintf("cache %s: %v", file, werr))
-				}
+		if sums != nil {
+			if _, ok := sums[file]; !ok {
+				return nil, warn, fmt.Errorf("unknown list %q (run `splitroute lists`)", n)
 			}
-			continue
 		}
-		b, cerr := os.ReadFile(cached)
-		if cerr != nil {
-			return nil, warn, fmt.Errorf("%s: %v, and no cached copy", file, err)
+		b, w, err := fetchFile(base, cacheDir, file, sums, save)
+		warn = append(warn, w...)
+		if err != nil {
+			return nil, warn, err
 		}
-		warn = append(warn, fmt.Sprintf("%s: %v; using cached copy", file, err))
 		out[n] = b
 	}
 	return out, warn, nil
+}
+
+// fetchFile downloads one release file and checks it against sums (nil: the
+// checksums couldn't be downloaded). On any failure it falls back to the
+// cached copy, with a warning; with no cached copy it's an error.
+func fetchFile(base, cacheDir, file string, sums map[string]string, save bool) ([]byte, []string, error) {
+	var warn []string
+	cached := filepath.Join(cacheDir, file)
+	var err error
+	if sums == nil {
+		err = errors.New("no checksums")
+	} else if want, ok := sums[file]; !ok {
+		err = errors.New("not in the release's SHA256SUMS")
+	} else if b, gerr := httpGet(base + "/" + file); gerr != nil {
+		err = gerr
+	} else if got := sha256.Sum256(b); hex.EncodeToString(got[:]) != want {
+		err = errors.New("checksum mismatch")
+	} else {
+		if save {
+			if werr := fileutil.WriteAtomic(cached, b); werr != nil {
+				warn = append(warn, fmt.Sprintf("cache %s: %v", file, werr))
+			}
+		}
+		return b, warn, nil
+	}
+	b, cerr := os.ReadFile(cached)
+	if cerr != nil {
+		return nil, warn, fmt.Errorf("%s: %v, and no cached copy", file, err)
+	}
+	return b, append(warn, fmt.Sprintf("%s: %v; using cached copy", file, err)), nil
 }
 
 // Available returns the list names in the release at base.

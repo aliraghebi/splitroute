@@ -33,32 +33,60 @@ func (a *app) want() ([]rules.Route, []string, error) {
 	}
 	var names, warn []string
 	byList := map[string][]netip.Prefix{}
+	own := map[string]rules.Entries{} // custom lists and imports, in config order below
+	var ownOrder []string
+	wantAS := map[uint32]bool{}
 	for _, l := range cfg.Lists {
+		var es rules.Entries
 		switch {
 		case l.Action == rules.VPN:
+			continue
 		case l.Import != nil:
-			es, w, err := a.importEntries(l.Name)
-			if err != nil {
+			var w string
+			if es, w, err = a.importEntries(l.Name); err != nil {
 				return nil, warn, err
 			}
 			if w != "" {
 				warn = append(warn, w)
 			}
-			byList[l.Name] = es.V4
-			if es.Unrouted() != "" && len(es.V4) == 0 {
-				warn = append(warn, fmt.Sprintf("%s has no routable IPv4 ranges (%s)", l.Name, es.Unrouted()))
-			}
 		case l.Custom:
-			es, err := rules.ParseEntries(l.Entries)
-			if err != nil {
+			if es, err = rules.ParseEntries(l.Entries); err != nil {
 				return nil, nil, err // validated on load; unreachable
-			}
-			byList[l.Name] = es.V4
-			if es.Unrouted() != "" && len(es.V4) == 0 {
-				warn = append(warn, fmt.Sprintf("%s has no routable IPv4 ranges (%s)", l.Name, es.Unrouted()))
 			}
 		default:
 			names = append(names, l.Name)
+			continue
+		}
+		own[l.Name] = es
+		ownOrder = append(ownOrder, l.Name)
+		for _, as := range es.ASNs {
+			wantAS[as] = true
+		}
+	}
+	asns, awarn := a.resolveASNs(cfg.ListsURL(), wantAS)
+	warn = append(warn, awarn...)
+	for _, n := range ownOrder {
+		es := own[n]
+		v4 := es.V4
+		var unknown []string
+		for _, as := range es.ASNs {
+			r, ok := asns[as]
+			if !ok {
+				if asns != nil {
+					unknown = append(unknown, fmt.Sprintf("AS%d", as))
+				}
+				continue
+			}
+			v4 = append(v4, r.V4...)
+		}
+		if len(unknown) > 0 {
+			warn = append(warn, fmt.Sprintf("%s: %s announce no prefixes (not in the routing-rules ASN table)", n, strings.Join(unknown, ", ")))
+		}
+		byList[n] = v4
+		if len(v4) == 0 {
+			if u := es.Unrouted(); u != "" {
+				warn = append(warn, fmt.Sprintf("%s has no routable IPv4 ranges (%s)", n, u))
+			}
 		}
 	}
 	files, fwarn, err := lists.Fetch(cfg.ListsURL(), filepath.Join(a.state.Dir, "lists"), names, !a.dry)
@@ -78,6 +106,25 @@ func (a *app) want() ([]rules.Route, []string, error) {
 	}
 	routes, err := rules.Plan(cfg.Uses(), byList)
 	return routes, warn, err
+}
+
+// resolveASNs maps the wanted AS numbers to their prefixes from the release's
+// ASN table. Without the table (download failed and nothing cached) it
+// returns nil and a warning: AS entries are skipped this pass, the rest is
+// routed.
+func (a *app) resolveASNs(base string, want map[uint32]bool) (map[uint32]rules.Entries, []string) {
+	if len(want) == 0 {
+		return nil, nil
+	}
+	b, warn, err := lists.FetchASN(base, filepath.Join(a.state.Dir, "lists"), !a.dry)
+	if err != nil {
+		return nil, append(warn, fmt.Sprintf("AS numbers not routed: %v", err))
+	}
+	m, _, err := lists.ParseASN(b, want)
+	if err != nil {
+		return nil, append(warn, fmt.Sprintf("AS numbers not routed: %v", err))
+	}
+	return m, warn
 }
 
 // importEntries reads an import's downloaded entries, with a warning when

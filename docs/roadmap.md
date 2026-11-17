@@ -77,9 +77,10 @@ Policy = ordered [{list, action}]      action: direct | block | vpn
 3. **User lists**: done (CLI and socket; the app adopts the socket commands in the redesign). Pure edits in
    `config/edit.go`, each run through `store.Update`, so one edit rewrites the config in one transaction:
    fine for hand-made lists (cap 100k entries). Imports get a direct path to `entries` instead.
-4. **ASN**: routing-rules publishes per-ASN CIDR lists at build time from public BGP data (separate repo
-   change). The client treats them as CIDR lists: offline, `SHA256SUMS`-checked. `AS12345` typed in a user
-   list resolves via the routing-rules index, never a live third-party API from a root daemon.
+4. **ASN**: done. routing-rules publishes `asn.txt.gz` (every AS with its prefixes, from iptoasn.com,
+   PDDL; canaries and a 25% max change against the last good copy in its build). The client downloads it
+   only when a list has an AS number, checks `SHA256SUMS`, caches it and parses only the wanted ASes.
+   Trust: iptoasn data is unsigned; our checksum proves only that the file came from our build.
 5. **Imports**: done for plain text (entries, hosts files, Surge/Clash domain sets). Next formats, one
    parser each with real fixtures: AdGuard/uBlock (domain rules only), Clash rule-provider YAML, sing-box
    `.srs`, v2ray `geoip.dat`/`geosite.dat`. Safety rules are in CLAUDE.md.

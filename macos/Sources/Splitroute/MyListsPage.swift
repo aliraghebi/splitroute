@@ -155,7 +155,7 @@ struct CustomListEditor: View {
                 } header: {
                     Text("Entries")
                 } footer: {
-                    Text("One per line: an address or range (203.0.113.7, 198.51.100.0/24, 2400:cb00::/32), a domain with its subdomains (example.com), one exact name (full:www.example.com) or an AS number (AS13335). Lines starting with # are notes. Only IPv4 is routed for now; the rest is kept for upcoming domain and ASN routing.")
+                    Text("One per line: an address or range (203.0.113.7, 198.51.100.0/24, 2400:cb00::/32), a domain with its subdomains (example.com), one exact name (full:www.example.com) or an AS number (AS13335: every range it announces). Lines starting with # are notes. Only IPv4 is routed for now; domains and IPv6 are kept for later.")
                         .font(.caption).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }

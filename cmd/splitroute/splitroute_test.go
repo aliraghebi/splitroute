@@ -64,7 +64,7 @@ func TestWantDisabledAndCustom(t *testing.T) {
 	a := testApp(t, true, false)
 	custom := config.Config{Lists: []config.List{
 		{Name: "Work", Custom: true, Action: rules.Block, Entries: []string{"203.0.113.7", "example.com", "2400:cb00::/32"}},
-		{Name: "Sites", Custom: true, Action: rules.Direct, Entries: []string{"example.org", "AS13335"}},
+		{Name: "Sites", Custom: true, Action: rules.Direct, Entries: []string{"example.org"}},
 	}}
 	if err := config.Save(a.cfgPath, custom); err != nil {
 		t.Fatal(err)
@@ -74,7 +74,7 @@ func TestWantDisabledAndCustom(t *testing.T) {
 		t.Fatalf("got %v, %v", got, err)
 	}
 	// Only IPv4 is routed; a list with nothing routable says so.
-	if !reflect.DeepEqual(warn, []string{"Sites has no routable IPv4 ranges (1 domains, 1 AS numbers)"}) {
+	if !reflect.DeepEqual(warn, []string{"Sites has no routable IPv4 ranges (1 domains)"}) {
 		t.Fatalf("warnings %q", warn)
 	}
 	custom.Disabled = true

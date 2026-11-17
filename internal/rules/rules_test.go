@@ -24,7 +24,7 @@ func TestParseEntries(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %+v", got)
 	}
-	if u := got.Unrouted(); u != "2 domains, 1 IPv6, 1 AS numbers" {
+	if u := got.Unrouted(); u != "2 domains, 1 IPv6" {
 		t.Errorf("Unrouted = %q", u)
 	}
 	if _, err := ParseEntries([]string{"203.0.113.7", "10.0.0.1"}); err == nil {
