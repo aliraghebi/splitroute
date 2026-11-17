@@ -1,0 +1,24 @@
+#!/bin/sh
+# Builds build/Splitroute.app: the Swift menu bar app with the Go daemon
+# (universal binaries) in Contents/Resources. Ad-hoc signed; not notarized.
+set -eu
+cd "$(dirname "$0")"
+VERSION=${VERSION:-dev}
+APP=build/Splitroute.app
+
+swift build -c release --arch arm64 --arch x86_64
+BIN=$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)
+rm -rf build && mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+cp "$BIN/Splitroute" "$APP/Contents/MacOS/"
+sed "s/@VERSION@/$VERSION/g" Info.plist > "$APP/Contents/Info.plist"
+
+for arch in arm64 amd64; do
+  (cd .. && CGO_ENABLED=0 GOOS=darwin GOARCH=$arch go build -trimpath \
+    -ldflags "-s -w -X main.version=$VERSION" -o "macos/build/splitroute-$arch" .)
+done
+lipo -create build/splitroute-arm64 build/splitroute-amd64 -output "$APP/Contents/Resources/splitroute"
+rm build/splitroute-arm64 build/splitroute-amd64
+
+codesign --force --sign - "$APP/Contents/Resources/splitroute"
+codesign --force --sign - "$APP"
+echo "$APP"

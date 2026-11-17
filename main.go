@@ -23,6 +23,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -39,14 +40,19 @@ Commands:
   status     show the gateway, VPN and applied routes
   watch      apply, then keep routes correct as the network changes (run by the service)
   lists      show the lists available in the latest release
+  preset     list presets; "preset <id>" replaces the release lists with a preset's
   install    install and start the system service (launchd or systemd)
   uninstall  stop and remove the service, then remove the routes
   version    print the version
 
-Config (default /etc/splitroute.conf; without it, ir-cidr = direct):
-  ir-cidr  = direct    # route via the physical gateway, outside the VPN
-  malware  = block     # drop
-  telegram = vpn       # leave alone
+Config (default /etc/splitroute.conf, JSON; without it, ir-cidr goes direct):
+  {"lists": [
+    {"name": "ir-cidr", "action": "direct"},
+    {"name": "malware", "action": "block"},
+    {"name": "Work", "custom": true, "action": "direct", "entries": ["203.0.113.0/24"]}
+  ]}
+direct: via the physical gateway, outside the VPN; block: drop; vpn: leave alone.
+The 0.1 format ("ir-cidr = direct" lines) is still read.
 
 Flags:
 `
@@ -69,13 +75,20 @@ func main() {
 		os.Exit(2)
 	}
 	cmd := fs.Arg(0)
-	_ = fs.Parse(fs.Args()[1:]) // flags may also follow the command
-	if fs.NArg() > 0 {
+	var args []string
+	for rest := fs.Args()[1:]; len(rest) > 0; rest = fs.Args()[1:] { // flags may also follow the command or its argument
+		_ = fs.Parse(rest)
+		if fs.NArg() == 0 {
+			break
+		}
+		args = append(args, fs.Arg(0))
+	}
+	if len(args) > 1 || (len(args) == 1 && cmd != "preset") {
 		fs.Usage()
 		os.Exit(2)
 	}
 	a := newApp(runtime.GOOS, *cfgPath, *dry)
-	if err := a.do(cmd); err != nil {
+	if err := a.do(cmd, args); err != nil {
 		log.Fatalf("splitroute: %v", err)
 	}
 }
@@ -89,6 +102,11 @@ type app struct {
 	dry      bool
 	query    func(name string, args ...string) (string, error)
 	change   func(name string, args []string, stdin string) error
+
+	cfgMu   sync.Mutex    // serializes config read-modify-write
+	reload  chan struct{} // set by watch: asks it to re-apply now
+	errMu   sync.Mutex
+	lastErr string // watch: the last failed apply, for status
 }
 
 func newApp(goos, cfgPath string, dry bool) *app {
@@ -122,8 +140,8 @@ func execChange(name string, args []string, stdin string) error {
 	return nil
 }
 
-func (a *app) do(cmd string) error {
-	needRoot := map[string]bool{"up": true, "down": true, "watch": true, "install": true, "uninstall": true}
+func (a *app) do(cmd string, args []string) error {
+	needRoot := map[string]bool{"up": true, "down": true, "watch": true, "install": true, "uninstall": true, "preset": len(args) > 0}
 	if needRoot[cmd] && !a.dry && os.Geteuid() != 0 {
 		return fmt.Errorf("%s needs root: run it with sudo", cmd)
 	}
@@ -138,6 +156,8 @@ func (a *app) do(cmd string) error {
 		return a.withLock(a.watch)
 	case "lists":
 		return a.lists()
+	case "preset":
+		return a.preset(args)
 	case "install":
 		return a.install()
 	case "uninstall":
@@ -151,9 +171,10 @@ func (a *app) do(cmd string) error {
 
 // State is what splitroute last applied; `down` removes exactly these routes.
 type State struct {
-	Gateway Gateway   `json:"gateway"`
-	Routes  []Route   `json:"routes"`
-	Fetched time.Time `json:"fetched"`
+	Gateway  Gateway   `json:"gateway"`
+	Routes   []Route   `json:"routes"`
+	Fetched  time.Time `json:"fetched"`
+	Warnings []string  `json:"warnings,omitempty"`
 }
 
 func (a *app) statePath() string { return filepath.Join(a.stateDir, "state.json") }
@@ -244,43 +265,51 @@ func (a *app) vpnIface() string {
 	return ""
 }
 
-// want downloads the configured lists and plans the routes.
-func (a *app) want() ([]Route, error) {
+// want downloads the configured release lists, adds the custom lists and
+// plans the routes. A disabled config plans none.
+func (a *app) want() ([]Route, []string, error) {
 	cfg, err := loadConfig(a.cfgPath)
-	if err != nil {
-		return nil, err
+	if err != nil || cfg.Disabled {
+		return nil, nil, err
 	}
 	var names []string
-	for _, la := range cfg.Lists {
-		if la.Action != VPN {
-			names = append(names, la.Name)
+	lists := map[string][]netip.Prefix{}
+	for _, l := range cfg.Lists {
+		switch {
+		case l.Action == VPN:
+		case l.Custom:
+			if lists[l.Name], err = parseEntries(l.Entries); err != nil {
+				return nil, nil, err // validated on load; unreachable
+			}
+		default:
+			names = append(names, l.Name)
 		}
 	}
-	files, warn, err := fetchLists(cfg.BaseURL, filepath.Join(a.stateDir, "lists"), names, !a.dry)
-	for _, w := range warn {
-		log.Print("warning: ", w)
-	}
+	files, warn, err := fetchLists(cfg.baseURL(), filepath.Join(a.stateDir, "lists"), names, !a.dry)
 	if err != nil {
-		return nil, err
+		return nil, warn, err
 	}
-	lists := map[string][]netip.Prefix{}
 	for _, n := range names {
 		ps, st, err := parseList(files[n])
 		if err != nil {
-			return nil, fmt.Errorf("%s.list: %w", n, err)
+			return nil, warn, fmt.Errorf("%s.list: %w", n, err)
 		}
 		if len(ps) == 0 {
-			log.Printf("warning: %s has no routable IPv4 ranges (%d domains, %d IPv6, %d reserved skipped)", n, st.domains, st.ipv6, st.reserved)
+			warn = append(warn, fmt.Sprintf("%s has no routable IPv4 ranges (%d domains, %d IPv6, %d reserved skipped)", n, st.domains, st.ipv6, st.reserved))
 		}
 		lists[n] = ps
 	}
-	return plan(cfg, lists)
+	routes, err := plan(cfg, lists)
+	return routes, warn, err
 }
 
 // up downloads the lists and moves the system from the saved state to the
 // planned routes. It returns the new state.
 func (a *app) up(force bool) (State, error) {
-	want, err := a.want()
+	want, warn, err := a.want()
+	for _, w := range warn {
+		log.Print("warning: ", w)
+	}
 	if err != nil {
 		return State{}, err
 	}
@@ -292,7 +321,7 @@ func (a *app) up(force bool) (State, error) {
 	if err != nil && slices.ContainsFunc(want, func(r Route) bool { return r.Action == Direct }) {
 		return st, err
 	}
-	next := State{Gateway: gw, Routes: want, Fetched: time.Now().UTC()}
+	next := State{Gateway: gw, Routes: want, Fetched: time.Now().UTC(), Warnings: warn}
 	return next, a.applyAndSave(st, next, force)
 }
 
@@ -405,16 +434,27 @@ func (a *app) down() error {
 	return err
 }
 
-// watch applies the routes, then re-applies them when the gateway changes,
-// when they disappear (VPN reconnects often rewrite routes) and once a day
-// with fresh lists. On SIGINT/SIGTERM it removes them: routes left behind
-// would point at a gateway nobody maintains.
+// watch applies the routes, then re-applies them when the config changes
+// (socket request or file edit), when the gateway changes, when they disappear
+// (VPN reconnects often rewrite routes) and once a day with fresh lists. On
+// SIGINT/SIGTERM it removes them: routes left behind would point at a gateway
+// nobody maintains.
 func (a *app) watch() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	a.reload = make(chan struct{}, 1)
+	if ln, err := a.listen(); err != nil {
+		log.Printf("warning: control socket: %v (the menu bar app can't connect)", err)
+	} else {
+		defer ln.Close()
+		go a.serve(ln)
+	}
 	var st State
+	var cfgMod time.Time
 	refresh := func() {
+		cfgMod = modTime(a.cfgPath)
 		next, err := a.up(false)
+		a.setLastErr(err)
 		if err != nil {
 			log.Printf("up: %v (retrying in a minute)", err)
 			st.Fetched = time.Now().Add(time.Minute - refreshEvery)
@@ -429,22 +469,27 @@ func (a *app) watch() error {
 		select {
 		case <-ctx.Done():
 			return a.down()
+		case <-a.reload:
+			refresh()
+			continue
 		case <-t.C:
 		}
-		if time.Since(st.Fetched) > refreshEvery {
+		if time.Since(st.Fetched) > refreshEvery || !modTime(a.cfgPath).Equal(cfgMod) {
 			refresh()
 			continue
 		}
 		if len(st.Routes) == 0 {
-			continue // nothing applied yet; never overwrite the saved state with an empty one
+			continue // nothing applied; never overwrite the saved state with an empty one
 		}
 		gw, err := a.gateway()
 		if err != nil {
 			continue // offline: keep routes until a gateway is back
 		}
 		if gw != st.Gateway || !a.present(st) {
-			next := State{Gateway: gw, Routes: st.Routes, Fetched: st.Fetched}
-			if err := a.applyAndSave(st, next, gw == st.Gateway); err != nil {
+			next := State{Gateway: gw, Routes: st.Routes, Fetched: st.Fetched, Warnings: st.Warnings}
+			err := a.applyAndSave(st, next, gw == st.Gateway)
+			a.setLastErr(err)
+			if err != nil {
 				log.Printf("reapply: %v", err)
 			}
 			st = next
@@ -452,52 +497,144 @@ func (a *app) watch() error {
 	}
 }
 
-func (a *app) status() error {
+// modTime is the file's modification time, or zero if it can't be read.
+func modTime(path string) time.Time {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return time.Time{}
+	}
+	return fi.ModTime()
+}
+
+func (a *app) setLastErr(err error) {
+	a.errMu.Lock()
+	defer a.errMu.Unlock()
+	a.lastErr = ""
+	if err != nil {
+		a.lastErr = err.Error()
+	}
+}
+
+// Status is what `status` prints and the control socket returns.
+type Status struct {
+	Version      string      `json:"version"`
+	Enabled      bool        `json:"enabled"`
+	Gateway      *Gateway    `json:"gateway,omitempty"`
+	GatewayError string      `json:"gateway_error,omitempty"`
+	VPN          string      `json:"vpn,omitempty"`
+	Routes       int         `json:"routes"`
+	Lists        []ListCount `json:"lists"`
+	Fetched      time.Time   `json:"fetched"`
+	Missing      bool        `json:"missing"` // saved routes are gone from the routing table
+	Warnings     []string    `json:"warnings,omitempty"`
+	Error        string      `json:"error,omitempty"` // service only: the last apply failed
+}
+
+// ListCount is how many routes a list contributed.
+type ListCount struct {
+	Name   string `json:"name"`
+	Action Action `json:"action"`
+	Routes int    `json:"routes"`
+}
+
+func (a *app) buildStatus() (Status, error) {
+	s := Status{Version: version, Lists: []ListCount{}}
+	cfg, err := loadConfig(a.cfgPath)
+	if err != nil {
+		return s, err
+	}
+	s.Enabled = !cfg.Disabled
 	if gw, err := a.gateway(); err != nil {
-		fmt.Println("gateway:  ", err)
+		s.GatewayError = err.Error()
 	} else {
-		fmt.Printf("gateway:   %s on %s\n", gw.IP, gw.Iface)
+		s.Gateway = &gw
 	}
-	if v := a.vpnIface(); v != "" {
-		fmt.Printf("vpn:       %s carries traffic to 1.1.1.1\n", v)
-	} else {
-		fmt.Println("vpn:       none detected")
-	}
+	s.VPN = a.vpnIface()
 	st, err := a.loadState()
+	if err != nil {
+		return s, err
+	}
+	s.Routes, s.Fetched, s.Warnings = len(st.Routes), st.Fetched, st.Warnings
+	s.Lists = countByList(st.Routes)
+	s.Missing = !a.present(st)
+	a.errMu.Lock()
+	s.Error = a.lastErr
+	a.errMu.Unlock()
+	return s, nil
+}
+
+func countByList(routes []Route) []ListCount {
+	idx := map[string]int{}
+	out := []ListCount{}
+	for _, r := range routes {
+		i, ok := idx[r.List]
+		if !ok {
+			i = len(out)
+			idx[r.List] = i
+			out = append(out, ListCount{Name: r.List, Action: r.Action})
+		}
+		out[i].Routes++
+	}
+	slices.SortFunc(out, func(x, y ListCount) int { return strings.Compare(x.Name, y.Name) })
+	return out
+}
+
+func (a *app) status() error {
+	s, err := a.buildStatus()
 	if err != nil {
 		return err
 	}
-	if len(st.Routes) == 0 {
+	if s.Gateway != nil {
+		fmt.Printf("gateway:   %s on %s\n", s.Gateway.IP, s.Gateway.Iface)
+	} else {
+		fmt.Println("gateway:  ", s.GatewayError)
+	}
+	if s.VPN != "" {
+		fmt.Printf("vpn:       %s carries traffic to 1.1.1.1\n", s.VPN)
+	} else {
+		fmt.Println("vpn:       none detected")
+	}
+	if !s.Enabled {
+		fmt.Println("enabled:   no (turned off in the config)")
+	}
+	if s.Routes == 0 {
 		fmt.Println("routes:    none (run `sudo splitroute up`)")
 		return nil
 	}
-	count := map[string]int{}
-	for _, r := range st.Routes {
-		count[string(r.Action)+" "+r.List]++
+	fmt.Printf("routes:    %d, lists from %s\n", s.Routes, s.Fetched.Format(time.RFC3339))
+	for _, l := range s.Lists {
+		fmt.Printf("           %5d %s %s\n", l.Routes, l.Action, l.Name)
 	}
-	keys := make([]string, 0, len(count))
-	for k := range count {
-		keys = append(keys, k)
+	for _, w := range s.Warnings {
+		fmt.Println("warning:  ", w)
 	}
-	slices.Sort(keys)
-	fmt.Printf("routes:    %d via %s, lists from %s\n", len(st.Routes), st.Gateway.IP, st.Fetched.Format(time.RFC3339))
-	for _, k := range keys {
-		fmt.Printf("           %5d %s\n", count[k], k)
-	}
-	if !a.present(st) {
+	if s.Missing {
 		fmt.Println("warning:   routes are missing from the routing table; run `sudo splitroute up`")
 	}
 	return nil
 }
 
 func (a *app) lists() error {
-	cfg, err := loadConfig(a.cfgPath)
+	names, err := a.availableLists()
 	if err != nil {
 		return err
 	}
-	b, err := httpGet(cfg.BaseURL + "/SHA256SUMS")
+	fmt.Println("Lists (only their IPv4 ranges are routed; domain-only lists have no effect):")
+	for _, n := range names {
+		fmt.Println("  " + n)
+	}
+	return nil
+}
+
+// availableLists returns the list names in the latest release.
+func (a *app) availableLists() ([]string, error) {
+	cfg, err := loadConfig(a.cfgPath)
 	if err != nil {
-		return err
+		return nil, err
+	}
+	b, err := httpGet(cfg.baseURL() + "/SHA256SUMS")
+	if err != nil {
+		return nil, err
 	}
 	var names []string
 	for f := range parseSums(b) {
@@ -506,11 +643,58 @@ func (a *app) lists() error {
 		}
 	}
 	slices.Sort(names)
-	fmt.Println("Lists (only their IPv4 ranges are routed; domain-only lists have no effect):")
-	for _, n := range names {
-		fmt.Println("  " + n)
+	return names, nil
+}
+
+func (a *app) preset(args []string) error {
+	if len(args) == 0 {
+		for _, p := range presets {
+			fmt.Printf("%-10s %s\n", p.ID, p.Name)
+			for _, l := range p.Lists {
+				fmt.Printf("           %-6s %s\n", l.Action, l.Name)
+			}
+		}
+		return nil
 	}
+	if a.dry {
+		cfg, err := loadConfig(a.cfgPath)
+		if err == nil {
+			cfg, err = withPreset(cfg, args[0])
+		}
+		if err == nil {
+			err = json.NewEncoder(os.Stdout).Encode(cfg)
+		}
+		return err
+	}
+	if _, err := a.updateConfig(func(c Config) (Config, error) { return withPreset(c, args[0]) }); err != nil {
+		return err
+	}
+	log.Printf("preset %s saved to %s; the service applies it within %s (or run `sudo splitroute up`)", args[0], a.cfgPath, checkEvery)
 	return nil
+}
+
+// updateConfig loads the config, changes it with f, saves it and asks the
+// service (if this process is it) to apply it now.
+func (a *app) updateConfig(f func(Config) (Config, error)) (Config, error) {
+	a.cfgMu.Lock()
+	defer a.cfgMu.Unlock()
+	cfg, err := loadConfig(a.cfgPath)
+	if err != nil {
+		return Config{}, err
+	}
+	if cfg, err = f(cfg); err != nil {
+		return Config{}, err
+	}
+	if err := saveConfig(a.cfgPath, cfg); err != nil {
+		return Config{}, err
+	}
+	if a.reload != nil {
+		select {
+		case a.reload <- struct{}{}:
+		default: // a reload is already pending
+		}
+	}
+	return cfg, nil
 }
 
 func (a *app) servicePath() string {
@@ -521,15 +705,13 @@ func (a *app) servicePath() string {
 }
 
 func (a *app) install() error {
-	// Prefer the PATH entry (e.g. Homebrew's /opt/homebrew/bin symlink): it stays
-	// valid across upgrades, while the resolved file lives in a versioned folder.
-	exe, err := exec.LookPath("splitroute")
+	self, err := os.Executable()
 	if err != nil {
-		if exe, err = os.Executable(); err != nil {
-			return err
-		}
+		return err
 	}
-	if exe, err = filepath.Abs(exe); err != nil {
+	path, _ := exec.LookPath("splitroute")
+	exe, err := filepath.Abs(serviceExe(self, path))
+	if err != nil {
 		return err
 	}
 	unit := serviceFile(a.goos, exe, a.cfgPath)
@@ -545,7 +727,35 @@ func (a *app) install() error {
 		return a.change("systemctl", []string{"enable", "--now", "splitroute"}, "")
 	}
 	_ = a.change("launchctl", []string{"bootout", "system/" + serviceLabel}, "") // not loaded is fine
+	a.waitUnloaded()
 	return a.change("launchctl", []string{"bootstrap", "system", a.servicePath()}, "")
+}
+
+// serviceExe picks the binary the service runs: this one, unless it lives in a
+// versioned Homebrew folder (Cellar, Caskroom) that the next upgrade deletes;
+// then the PATH entry (Homebrew's stable symlink). Never a PATH entry
+// otherwise: it may be an unrelated build (the app's admin prompt inherits the
+// user's PATH).
+func serviceExe(self, onPath string) string {
+	if onPath != "" && (strings.Contains(self, "/Cellar/") || strings.Contains(self, "/Caskroom/")) {
+		return onPath
+	}
+	return self
+}
+
+// waitUnloaded waits for launchd to drop the old job. bootout returns before
+// the old process exits (its SIGTERM handler removes the routes, which takes
+// seconds), and bootstrapping while the label still exists fails with
+// "5: Input/output error".
+func (a *app) waitUnloaded() {
+	if a.dry {
+		return
+	}
+	for deadline := time.Now().Add(30 * time.Second); time.Now().Before(deadline); time.Sleep(250 * time.Millisecond) {
+		if _, err := a.query("launchctl", "print", "system/"+serviceLabel); err != nil {
+			return
+		}
+	}
 }
 
 func (a *app) uninstall() error {

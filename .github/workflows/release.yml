@@ -31,3 +31,27 @@ jobs:
       - uses: actions/attest-build-provenance@v2
         with:
           subject-path: dist/*.tar.gz
+
+  app:
+    needs: release
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: build Splitroute.app
+        run: |
+          v=${GITHUB_REF_NAME#v}
+          VERSION=$v macos/build-app.sh
+          ditto -c -k --keepParent macos/build/Splitroute.app "Splitroute_${v}_macos.zip"
+          echo "VERSION=$v" >> "$GITHUB_ENV"
+      - run: gh release upload "$GITHUB_REF_NAME" "Splitroute_${VERSION}_macos.zip"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: Splitroute_*_macos.zip
+      - run: scripts/update-cask.sh "$VERSION" "Splitroute_${VERSION}_macos.zip"
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
