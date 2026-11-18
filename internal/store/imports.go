@@ -138,7 +138,7 @@ func (s *Store) SaveDownload(name, url string, d Download) error {
 	}
 	defer ins.Close()
 	pos := 0
-	for _, e := range entriesOf(d.Entries) {
+	for _, e := range d.Entries.All() {
 		if _, err := ins.Exec(id, pos, string(e.Kind), entryValue(e)); err != nil {
 			return err
 		}
@@ -182,26 +182,6 @@ func importID(tx *sql.Tx, name, url string) (int64, error) {
 		return 0, ErrImportChanged
 	}
 	return id, err
-}
-
-func entriesOf(es rules.Entries) []rules.Entry {
-	out := make([]rules.Entry, 0, len(es.V4)+len(es.V6)+len(es.Domains)+len(es.Suffixes)+len(es.ASNs))
-	for _, p := range es.V4 {
-		out = append(out, rules.Entry{Kind: rules.CIDR, Prefix: p})
-	}
-	for _, p := range es.V6 {
-		out = append(out, rules.Entry{Kind: rules.CIDR, Prefix: p})
-	}
-	for _, n := range es.Domains {
-		out = append(out, rules.Entry{Kind: rules.Domain, Name: n})
-	}
-	for _, n := range es.Suffixes {
-		out = append(out, rules.Entry{Kind: rules.DomainSuffix, Name: n})
-	}
-	for _, as := range es.ASNs {
-		out = append(out, rules.Entry{Kind: rules.ASN, AS: as})
-	}
-	return out
 }
 
 // ImportsDue reports whether any import is due (see ImportState.Due). Cheap

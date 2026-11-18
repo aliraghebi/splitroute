@@ -143,9 +143,10 @@ private struct Request: Encodable {
     var position: Int?
     var entries: [String]?
     var url: String?
+    var text: String?
 
     enum CodingKeys: String, CodingKey {
-        case cmd, config, enabled, preset, name, newName = "new_name", action, position, entries, url
+        case cmd, config, enabled, preset, name, newName = "new_name", action, position, entries, url, text
     }
 }
 
@@ -155,10 +156,21 @@ struct EntryEdit: Decodable, Equatable {
     var duplicates: Int?
     var removed: Int?
     var notFound: [String]?
+    var skipped: Int?
 
     enum CodingKeys: String, CodingKey {
-        case added, duplicates, removed, notFound = "not_found"
+        case added, duplicates, removed, notFound = "not_found", skipped
     }
+}
+
+/// A release list described for people (Go: lists.Info). The name stays the
+/// list's key; the title and description are what the app shows.
+struct ListInfo: Decodable, Hashable, Identifiable {
+    var name: String
+    var title: String
+    var description: String
+    var action: Action
+    var id: String { name }
 }
 
 private struct Response: Decodable {
@@ -167,6 +179,7 @@ private struct Response: Decodable {
     var status: Status?
     var config: Config?
     var lists: [String]?
+    var catalog: [ListInfo]?
     var presets: [Preset]?
     var edit: EntryEdit?
 }
@@ -199,7 +212,11 @@ enum Daemon {
     static func setConfig(_ c: Config) async throws -> Config { try await send(Request(cmd: "set_config", config: c)).config! }
     static func setEnabled(_ on: Bool) async throws -> Config { try await send(Request(cmd: "set_enabled", enabled: on)).config! }
     static func applyPreset(_ id: String) async throws -> Config { try await send(Request(cmd: "apply_preset", preset: id)).config! }
-    static func lists() async throws -> [String] { try await send(Request(cmd: "lists")).lists ?? [] }
+    /// Release list names and their descriptions (needs the network).
+    static func lists() async throws -> (names: [String], catalog: [ListInfo]) {
+        let r = try await send(Request(cmd: "lists"))
+        return (r.lists ?? [], r.catalog ?? [])
+    }
     static func presets() async throws -> [Preset] { try await send(Request(cmd: "presets")).presets ?? [] }
 
     /// A per-list edit (list_create, list_enable, list_import, list_remove, list_rename,
@@ -211,6 +228,14 @@ enum Daemon {
                                        position: position, entries: entries, url: url))
         guard let c = r.config else { throw DaemonError.failed("The service is a different version; reinstall it from Settings.") }
         return c
+    }
+
+    /// Creates a custom list from a list file's text, parsed by the daemon like an
+    /// import (plain entries, hosts files, domain sets), in one transaction.
+    static func createFromText(name: String, action: Action, text: String) async throws -> (config: Config, edit: EntryEdit?) {
+        let r = try await send(Request(cmd: "list_create", name: name, action: action, text: text))
+        guard let c = r.config else { throw DaemonError.failed("The service is a different version; reinstall it from Settings.") }
+        return (c, r.edit)
     }
 
     static func refreshImport(_ name: String) async throws { _ = try await send(Request(cmd: "list_refresh", name: name)) }

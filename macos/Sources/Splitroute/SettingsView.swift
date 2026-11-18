@@ -1,14 +1,13 @@
 import SwiftUI
 
 enum Page: String, CaseIterable, Identifiable {
-    case status, general, lists, myLists, advanced, about
+    case status, general, lists, advanced, about
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .general: return "General"
         case .lists: return "Lists"
-        case .myLists: return "My Lists"
         case .status: return "Status"
         case .advanced: return "Advanced"
         case .about: return "About"
@@ -18,8 +17,7 @@ enum Page: String, CaseIterable, Identifiable {
     var subtitle: String {
         switch self {
         case .general: return "Turn routing on or off, pick a preset, and choose how the app starts and quits."
-        case .lists: return "Ready-made lists from routing-rules, rebuilt daily."
-        case .myLists: return "Your own lists, and lists downloaded from a URL."
+        case .lists: return "Ready-made lists, lists imported from a URL or a file, and your own lists."
         case .status: return "What the service sees and the routes it has applied."
         case .advanced: return "List source, logs and the system service."
         case .about: return "Version and links."
@@ -30,8 +28,7 @@ enum Page: String, CaseIterable, Identifiable {
     var keywords: [String] {
         switch self {
         case .general: return ["Routing", "Service update", "Preset", "Open at login", "Turn on routing when the app opens", "When quitting while routing"]
-        case .lists: return ["Release lists", "Add a list"]
-        case .myLists: return ["Custom lists", "Import", "URL", "Entries"]
+        case .lists: return ["Add a list", "Ready-made", "Release lists", "Import", "URL", "File", "Custom", "Entries"]
         case .status: return ["Routing", "Gateway", "VPN", "Routes", "Release lists downloaded", "Service version"]
         case .advanced: return ["Release URL", "Log file", "Settings database", "Reinstall service", "Uninstall service"]
         case .about: return ["Updates", "Source code", "License", "Version"]
@@ -47,7 +44,6 @@ enum Page: String, CaseIterable, Identifiable {
         switch self {
         case .general: return "gearshape.fill"
         case .lists: return "list.bullet.rectangle.fill"
-        case .myLists: return "person.crop.rectangle.stack.fill"
         case .status: return "waveform.path.ecg"
         case .advanced: return "wrench.and.screwdriver.fill"
         case .about: return "info.circle.fill"
@@ -58,7 +54,6 @@ enum Page: String, CaseIterable, Identifiable {
         switch self {
         case .general: return .gray
         case .lists: return .blue
-        case .myLists: return .orange
         case .status: return .green
         case .advanced: return .indigo
         case .about: return .teal
@@ -118,7 +113,6 @@ struct SettingsView: View {
                 switch page {
                 case .general: GeneralPage()
                 case .lists: ListsPage()
-                case .myLists: MyListsPage()
                 case .status: StatusPage()
                 case .advanced: AdvancedPage()
                 case .about: AboutPage()
@@ -182,11 +176,12 @@ struct SidebarRow<Content: View>: View {
 /// Capsule search field; Liquid Glass on macOS 26+.
 struct SearchField: View {
     @Binding var text: String
+    var prompt = "Search settings…"
 
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-            TextField("Search settings…", text: $text).textFieldStyle(.plain)
+            TextField(prompt, text: $text).textFieldStyle(.plain)
             if !text.isEmpty {
                 Button { text = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
                     .buttonStyle(.plain)

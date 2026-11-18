@@ -10,7 +10,7 @@ struct StatusPage: View {
                     ValueRow("Routing", s.enabled ? "On" : "Off", description: model.summary)
                     ValueRow("Gateway", s.gateway.map { "\($0.ip) on \($0.iface)" } ?? "None", description: s.gatewayError, mono: true)
                     ValueRow("VPN", s.vpn ?? "None detected")
-                    ValueRow("Routes", s.routes.formatted(), description: s.missing ? "Some routes are missing from the routing table; re-applying." : nil)
+                    ValueRow("Routes", s.routes.grouped, description: s.missing ? "Some routes are missing from the routing table; re-applying." : nil)
                     ValueRow("Release lists downloaded", parseGoTime(s.fetched).map(relative) ?? "Never")
                     ValueRow("Service version", s.version)
                 } header: {
@@ -27,7 +27,7 @@ struct StatusPage: View {
                 Section {
                     if s.lists.isEmpty { Text("No lists are routed.").foregroundStyle(.secondary) }
                     ForEach(s.lists, id: \.name) { l in
-                        ValueRow(l.name, l.routes.formatted(), description: l.action.label)
+                        ValueRow(l.name, l.routes.grouped, description: l.action.label)
                     }
                 } header: {
                     Text("Routes per list")

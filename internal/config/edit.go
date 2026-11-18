@@ -115,6 +115,7 @@ type EntryEdit struct {
 	Duplicates int      `json:"duplicates,omitempty"` // already in the list
 	Removed    int      `json:"removed,omitempty"`
 	NotFound   []string `json:"not_found,omitempty"`
+	Skipped    int      `json:"skipped,omitempty"` // lines of an imported text that aren't entries
 }
 
 func (c Config) custom(name string) (Config, int, error) {

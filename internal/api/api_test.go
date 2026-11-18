@@ -4,6 +4,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net"
 	"reflect"
 	"slices"
@@ -130,5 +131,75 @@ func TestListEditCommands(t *testing.T) {
 	}
 	if !reflect.DeepEqual(m.cfg, before) {
 		t.Fatal("failed edit changed the config")
+	}
+}
+
+func TestListCreateFromText(t *testing.T) {
+	var b strings.Builder
+	for i := range config.MaxEntries + 1 {
+		fmt.Fprintf(&b, "h%d.example.com\n", i)
+	}
+	big := b.String()
+	tests := []struct {
+		name    string
+		text    string
+		ok      bool
+		entries []string
+		skipped int
+	}{
+		{"hosts file", "# comment\n127.0.0.1 localhost\n0.0.0.0 ads.example.com tracker.example.net\n0.0.0.0 bad_name!\n", true,
+			[]string{"full:ads.example.com", "full:tracker.example.net"}, 1},
+		{"plain entries", "198.51.100.0/24\nexample.org\nAS13335\n10.0.0.0/8\n", true,
+			[]string{"198.51.100.0/24", "example.org", "AS13335"}, 1},
+		{"domain set", ".example.com\nwww.example.net\n", true,
+			[]string{"full:www.example.net", "example.com"}, 0},
+		{"no entries", "# only notes\n!adblock\n", false, nil, 0},
+		{"too broad", "0.0.0.0/4\n", false, nil, 0},
+		{"over the cap", big, false, nil, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := &memBackend{cfg: config.Default()}
+			before := m.cfg
+			r := Respond(m, Request{Cmd: "list_create", Name: "File", Action: "block", Text: tt.text})
+			if r.OK != tt.ok {
+				t.Fatalf("ok=%v error=%q", r.OK, r.Error)
+			}
+			if !tt.ok {
+				if !reflect.DeepEqual(m.cfg, before) {
+					t.Fatal("a refused text changed the config")
+				}
+				return
+			}
+			l := m.cfg.Lists[len(m.cfg.Lists)-1]
+			if l.Name != "File" || !l.Custom || l.Action != "block" || !slices.Equal(l.Entries, tt.entries) {
+				t.Fatalf("list %+v, want entries %q", l, tt.entries)
+			}
+			if r.Edit == nil || r.Edit.Added != len(tt.entries) || r.Edit.Skipped != tt.skipped {
+				t.Fatalf("edit %+v, want added %d skipped %d", r.Edit, len(tt.entries), tt.skipped)
+			}
+		})
+	}
+	// A taken name creates nothing.
+	m := &memBackend{cfg: config.Default()}
+	if r := Respond(m, Request{Cmd: "list_create", Name: "ir-cidr", Action: "block", Text: "example.com\n"}); r.OK {
+		t.Fatal("created a list over an existing name")
+	}
+}
+
+type listsBackend struct{ noBackend }
+
+func (listsBackend) AvailableLists() ([]string, error) { return []string{"ir-cidr", "brand-new"}, nil }
+
+func TestListsCatalog(t *testing.T) {
+	r := Respond(listsBackend{}, Request{Cmd: "lists"})
+	if !r.OK || len(r.Catalog) != 2 {
+		t.Fatalf("%+v", r)
+	}
+	if c := r.Catalog[0]; c.Name != "ir-cidr" || c.Title != "Iran IP ranges" || c.Action != "direct" {
+		t.Fatalf("known list: %+v", c)
+	}
+	if c := r.Catalog[1]; c.Name != "brand-new" || c.Title != "brand-new" || c.Description != "" {
+		t.Fatalf("unknown list falls back to its name: %+v", c)
 	}
 }

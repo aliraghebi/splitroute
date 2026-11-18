@@ -46,9 +46,14 @@ an update, to restart the service on the new version).
 
 - The menu bar icon shows a green dot when routes are active, red when turned off or the service isn't
   running, and orange when something needs attention.
-- **Open App** (menu bar) opens the window on Status; it also has General (on/off, preset, startup), Lists
-  (release lists), My Lists (custom lists and imports from a URL), Advanced (list source, log file, the service), and About under the app name at the bottom, with a search field at the top. Changes
-  are sent to the service as you make them; if it refuses one, the reason shows under that row.
+- **Open App** (menu bar) opens the window on Status; it also has General (on/off, preset, startup), Lists,
+  Advanced (list source, log file, the service), and About under the app name at the bottom, with a search
+  field at the top. Changes are sent to the service as you make them; if it refuses one, the reason shows
+  under that row.
+- **Lists** shows every list you route, with its action. The **+** button adds one: a ready-made list from
+  routing-rules (by name, such as "Iran IP ranges"), an import from an https URL (downloaded daily), a file
+  from this Mac (plain lists, hosts files and domain sets up to 6 MB, copied into a custom list), or a
+  custom list you type.
 - The service runs on its own, so quitting the app doesn't stop routing by itself. While routes are active,
   **Quit** asks whether to turn them off first (**General → When quitting while routing** changes the default).
   With **Turn on routing when the app opens**, opening the app turns routing back on, so the app's lifetime
@@ -77,7 +82,7 @@ splitroute status           # gateway, VPN, applied routes
 sudo splitroute down        # remove every route it added
 sudo splitroute install     # run as a service (launchd / systemd): now and at boot
 sudo splitroute uninstall   # stop the service and remove the routes
-splitroute lists            # lists available in the latest routing-rules release
+splitroute lists            # lists in the latest routing-rules release, with their titles
 splitroute preset           # presets; `sudo splitroute preset <id>` applies one
 ```
 

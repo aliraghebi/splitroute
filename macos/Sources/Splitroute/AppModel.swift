@@ -11,6 +11,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var config: Config?
     @Published private(set) var presets: [Preset] = []
     @Published private(set) var available: [String] = []
+    @Published private(set) var catalog: [ListInfo] = []
     @Published var actionError: String?
     @Published private(set) var busy = false
     /// The daemon's last error per row or sheet (keys like "list:Work",
@@ -45,7 +46,7 @@ final class AppModel: ObservableObject {
         switch health {
         case .notRunning: return connError?.localizedDescription ?? "Connecting…"
         case .off: return "Turned off"
-        case .active: return "Active: \(status!.routes.formatted()) routes"
+        case .active: return "Active: \(status!.routes.grouped) routes"
         case .problem:
             guard let s = status else { return "" }
             if let e = s.error { return "Problem: \(e)" }
@@ -88,7 +89,10 @@ final class AppModel: ObservableObject {
             self.config = try await Daemon.config()
             self.presets = try await Daemon.presets()
         }
-        if let names = try? await Daemon.lists() { available = names }
+        if let l = try? await Daemon.lists() {
+            available = l.names
+            catalog = l.catalog
+        }
     }
 
     func setEnabled(_ on: Bool) async {
@@ -122,6 +126,28 @@ final class AppModel: ObservableObject {
             try await Daemon.refreshImport(name)
             return nil
         }
+    }
+
+    /// The release list's title and description; nil for custom lists, imports and
+    /// release lists the service hasn't described (it may be older).
+    func info(_ name: String) -> ListInfo? { catalog.first { $0.name == name } }
+
+    /// Creates a custom list from a file's text. Returns the entry counts, or the
+    /// daemon's error.
+    func createFromFile(name: String, action: Action, text: String) async -> (edit: EntryEdit?, error: String?) {
+        var counts: EntryEdit?
+        let e = await attempt {
+            let r = try await Daemon.createFromText(name: name, action: action, text: text)
+            counts = r.edit
+            return r.config
+        }
+        // A service older than this app ignores "text" and creates an empty list
+        // with no counts: undo that instead of reporting success.
+        if e == nil, counts == nil {
+            await removeList(name)
+            return (nil, "The service is older than this app and can't import files. Update it (Advanced → Reinstall service), then try again.")
+        }
+        return (counts, e)
     }
 
     /// Returns the daemon's error, or nil when the import was added.

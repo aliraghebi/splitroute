@@ -1,55 +1,149 @@
 import SwiftUI
 
-/// Release lists from routing-rules.
+/// Every list the user has, in config order: ready-made (release) lists, URL
+/// imports and custom lists. The + in the toolbar opens AddListSheet.
 struct ListsPage: View {
     @EnvironmentObject private var model: AppModel
+    @State private var adding = false
+    @State private var editing: CustomTarget?
+    @State private var confirmRemove: RouteList?
 
-    private var release: [RouteList] {
-        (model.config?.lists ?? []).filter { !$0.custom && $0.importSource == nil }
-    }
-
-    private var missing: [String] {
-        model.available.filter { n in !(model.config?.lists ?? []).contains { $0.name == n } }
-    }
+    private var lists: [RouteList] { model.config?.lists ?? [] }
 
     var body: some View {
-        Form {
+        Group {
             if !model.ready {
-                ServiceUnavailable()
-            } else {
-                Section {
-                    if release.isEmpty {
-                        Text("No release lists: traffic for these ranges follows the VPN.").foregroundStyle(.secondary)
+                Form { ServiceUnavailable() }
+            } else if lists.isEmpty {
+                // In a scroll view like the other pages, so the toolbar looks the same.
+                GeometryReader { g in
+                    ScrollView {
+                        EmptyLists { adding = true }.frame(maxWidth: .infinity, minHeight: g.size.height)
                     }
-                    ForEach(release) { l in
-                        SettingRow(l.name, description: routesLine(model, l.name), error: model.error("list:\(l.name)")) {
-                            ActionPicker(action: l.action) { a in Task { await model.setAction(l.name, a) } }
-                            RowButton(symbol: "minus.circle", help: "Remove \(l.name)") {
-                                Task { await model.removeList(l.name) }
-                            }
-                        }
-                    }
-                } header: {
-                    Text("Enabled")
-                } footer: {
-                    ActionsFooter()
                 }
-                Section {
-                    SettingRow("Add a list", description: addDescription, error: model.error("lists")) {
-                        SelectMenu(title: "Add", options: missing, label: { $0 }) { n in
-                            Task { await model.enableRelease(n) }
-                        }
-                        .disabled(missing.isEmpty || model.busy)
+            } else {
+                Form {
+                    Section {
+                        ForEach(lists) { row($0) }
+                    } footer: {
+                        ActionsFooter()
                     }
                 }
             }
         }
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button { adding = true } label: { Image(systemName: "plus") }
+                    .help("Add List")
+                    .accessibilityLabel("Add List")
+                    .disabled(!model.ready)
+            }
+        }
+        .sheet(isPresented: $adding) {
+            AddListSheet().environmentObject(model)
+        }
+        .sheet(item: $editing) { t in
+            CustomListEditor(original: t.list?.name, name: t.list?.name ?? "", action: t.list?.action ?? .direct,
+                             text: (t.list?.entries ?? []).joined(separator: "\n"),
+                             takenNames: Set(lists.map(\.name)).subtracting([t.list?.name ?? ""]))
+                .environmentObject(model)
+                .frame(width: 560, height: 512)
+        }
+        .confirmationDialog("Remove \(confirmRemove?.name ?? "")?", isPresented: Binding(
+            get: { confirmRemove != nil }, set: { if !$0 { confirmRemove = nil } }
+        ), presenting: confirmRemove) { l in
+            Button("Remove", role: .destructive) { Task { await model.removeList(l.name) } }
+        } message: { l in
+            Text("Its \(plural(entryCount(l), "entry", "entries")) are deleted. Export the settings first (splitroute config export) to keep a copy.")
+        }
     }
 
-    private var addDescription: String {
-        if model.available.isEmpty { return "Can't reach the latest release to see which lists it has." }
-        if missing.isEmpty { return "All \(model.available.count) lists of the latest release are added." }
-        return "\(plural(missing.count, "more list")) in the latest release. New lists start as Direct."
+    @ViewBuilder private func row(_ l: RouteList) -> some View {
+        let st = model.status?.imports?.first { $0.name == l.name }
+        HStack(alignment: .center, spacing: 12) {
+            Image(systemName: symbol(l))
+                .foregroundStyle(.secondary)
+                .frame(width: 20)
+                .help(kind(l))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(model.info(l.name)?.title ?? l.name)
+                Text(detail(l, st))
+                    .font(.subheadline)
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let e = model.error("list:\(l.name)") { ErrorText(e) }
+                if let e = st?.error { WarningText("Last download failed: \(e)") }
+            }
+            Spacer(minLength: 12)
+            ActionPicker(action: l.action) { a in Task { await model.setAction(l.name, a) } }
+            if l.custom {
+                RowButton(symbol: "pencil", help: "Edit \(l.name)") { editing = CustomTarget(list: l) }
+            }
+            if l.importSource != nil {
+                RowButton(symbol: "arrow.clockwise", help: "Download \(l.name) again") {
+                    Task { await model.refreshImport(l.name) }
+                }
+            }
+            RowButton(symbol: "minus.circle", help: "Remove \(l.name)") {
+                if l.custom && entryCount(l) > 0 { confirmRemove = l } else { Task { await model.removeList(l.name) } }
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func symbol(_ l: RouteList) -> String {
+        if l.importSource != nil { return "link" }
+        return l.custom ? "doc.text" : "globe"
+    }
+
+    private func kind(_ l: RouteList) -> String {
+        if l.importSource != nil { return "Imported from a URL, downloaded daily" }
+        return l.custom ? "Your own list" : "Ready-made list, updated daily"
+    }
+
+    /// The second line: what the list is, then how many routes it applied.
+    private func detail(_ l: RouteList, _ st: ImportStatus?) -> String {
+        var parts: [String] = []
+        if let src = l.importSource {
+            parts.append(URLComponents(string: src.url)?.host ?? src.url)
+            if let st {
+                parts.append(parseGoTime(st.fetchedAt).map { "\(plural(st.entries, "entry", "entries")), downloaded \(relative($0))" }
+                    ?? "Not downloaded yet")
+            }
+        } else if l.custom {
+            parts.append(plural(entryCount(l), "entry", "entries"))
+        } else {
+            parts.append(model.info(l.name)?.description ?? "Ready-made list")
+        }
+        if let r = routesLine(model, l.name) { parts.append(r) }
+        return parts.joined(separator: " · ")
+    }
+
+    private func entryCount(_ l: RouteList) -> Int {
+        l.entries.filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("#") }.count
+    }
+}
+
+/// Shown instead of the table when there are no lists, like Raycast's empty pages.
+private struct EmptyLists: View {
+    let add: () -> Void
+
+    var body: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "list.bullet.rectangle")
+                .font(.system(size: 40, weight: .light))
+                .foregroundStyle(.secondary)
+            Text("No lists yet").font(.title3.weight(.semibold))
+            Text("Add a ready-made list, import one from a URL or a file, or create your own. Without lists all traffic follows the VPN.")
+                .multilineTextAlignment(.center)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: 360)
+            Button("Add List", action: add)
+                .controlSize(.large)
+                .padding(.top, 4)
+        }
+        .padding(32)
     }
 }
 

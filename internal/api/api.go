@@ -40,6 +40,7 @@ import (
 	"time"
 
 	"github.com/aliraghebi/splitroute/internal/config"
+	"github.com/aliraghebi/splitroute/internal/lists"
 	"github.com/aliraghebi/splitroute/internal/rules"
 )
 
@@ -68,6 +69,10 @@ type Request struct {
 	Position *int         `json:"position,omitempty"`
 	Entries  []string     `json:"entries,omitempty"`
 	URL      string       `json:"url,omitempty"`
+	// Text is a list file's contents for list_create (plain entries, hosts
+	// file or domain set, read like an import). The app reads the file; the
+	// daemon never opens a path from the socket.
+	Text string `json:"text,omitempty"`
 }
 
 type Response struct {
@@ -76,12 +81,13 @@ type Response struct {
 	Status  *Status           `json:"status,omitempty"`
 	Config  *config.Config    `json:"config,omitempty"`
 	Lists   []string          `json:"lists,omitempty"`
+	Catalog []lists.Info      `json:"catalog,omitempty"` // "lists": titles of the release lists
 	Presets []config.Preset   `json:"presets,omitempty"`
 	Edit    *config.EntryEdit `json:"edit,omitempty"` // entries_add, entries_remove, entries_set
 }
 
 const (
-	maxRequest  = 1 << 20
+	maxRequest  = 8 << 20          // list_create text: 100k hosts lines are about 3 MB
 	connTimeout = 90 * time.Second // "lists" downloads SHA256SUMS
 )
 
@@ -172,6 +178,9 @@ func Respond(b Backend, req Request) Response {
 		r.Config, err = update(b, func(c config.Config) (config.Config, error) { return config.WithPreset(c, req.Preset) })
 	case "lists":
 		r.Lists, err = b.AvailableLists()
+		for _, n := range r.Lists {
+			r.Catalog = append(r.Catalog, lists.Describe(n))
+		}
 	case "presets":
 		r.Presets = config.Presets
 	case "list_refresh":
@@ -210,6 +219,9 @@ func listEdit(req Request, r *Response) (func(config.Config) (config.Config, err
 	}
 	switch req.Cmd {
 	case "list_create":
+		if req.Text != "" {
+			return createFromText(req, r)
+		}
 		return func(c config.Config) (config.Config, error) { return config.CreateList(c, req.Name, req.Action) }, nil
 	case "list_enable":
 		return func(c config.Config) (config.Config, error) { return config.EnableRelease(c, req.Name, req.Action) }, nil
@@ -243,4 +255,31 @@ func listEdit(req Request, r *Response) (func(config.Config) (config.Config, err
 		}, nil
 	}
 	return nil, errors.New("unknown command " + strconv.Quote(req.Cmd))
+}
+
+// createFromText parses req.Text like an import and creates a custom list
+// with its entries in one change, so a refused text leaves no empty list.
+func createFromText(req Request, r *Response) (func(config.Config) (config.Config, error), error) {
+	es, st, err := lists.ParseText([]byte(req.Text))
+	if err != nil {
+		return nil, err
+	}
+	all := es.All()
+	if len(all) == 0 {
+		return nil, errors.New("the file has no addresses, ranges, domains or AS numbers")
+	}
+	lines := make([]string, len(all))
+	for i, e := range all {
+		lines[i] = e.String()
+	}
+	return func(c config.Config) (config.Config, error) {
+		c, err := config.CreateList(c, req.Name, req.Action)
+		if err != nil {
+			return c, err
+		}
+		c, ed, err := config.SetEntries(c, req.Name, lines)
+		ed.Skipped = st.Invalid + st.Other + st.Reserved
+		r.Edit = &ed
+		return c, err
+	}, nil
 }

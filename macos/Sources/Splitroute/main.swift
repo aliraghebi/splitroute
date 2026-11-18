@@ -34,6 +34,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             .store(in: &bag)
         updateIcon()
         installMainMenu()
+        unfocusFieldsOnOutsideClick()
         // Opened by the user (Spotlight, Finder, `open`): show the window. At login
         // only the menu bar icon appears.
         if !launchedAtLogin || CommandLine.arguments.contains("--settings") { openSettings() }
@@ -42,6 +43,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         if let i = args.firstIndex(of: "--snapshot"), i + 1 < args.count {
             openSettings()
             Task { if let w = settingsWindow { await snapshotSettings(w, to: args[i + 1]) } }
+        }
+        // `--page lists` opens the window on that page (window captures for UI review).
+        if let i = args.firstIndex(of: "--page"), i + 1 < args.count, let p = Page(rawValue: args[i + 1]) {
+            openSettings()
+            UserDefaults.standard.set(p.rawValue, forKey: "settingsPage")
         }
         #endif
     }
@@ -180,6 +186,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     func windowWillClose(_ notification: Notification) {
         model.settingsVisible = false
         NSApp.setActivationPolicy(.accessory)
+    }
+
+    /// A click outside the text field being edited ends the editing, like in
+    /// System Settings: clicking a sidebar item leaves the search field. Only
+    /// single-line fields (field editors); a multi-line editor keeps focus.
+    private func unfocusFieldsOnOutsideClick() {
+        NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { e in
+            guard let w = e.window, let editor = w.firstResponder as? NSTextView, editor.isFieldEditor,
+                  let field = editor.delegate as? NSView else { return e }
+            if !field.bounds.contains(field.convert(e.locationInWindow, from: nil)) {
+                w.makeFirstResponder(nil)
+            }
+            return e
+        }
     }
 
     /// Shown only while the window is open (regular policy): Quit goes through the

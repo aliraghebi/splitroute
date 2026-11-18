@@ -313,5 +313,20 @@ func relative(_ d: Date) -> String {
 }
 
 func plural(_ n: Int, _ one: String, _ many: String? = nil) -> String {
-    "\(n.formatted()) \(n == 1 ? one : (many ?? one + "s"))"
+    "\(n.grouped) \(n == 1 ? one : (many ?? one + "s"))"
+}
+
+extension Int {
+    /// Digit grouping per System Settings > Language & Region, including custom
+    /// separators. `formatted()` ignores those overrides (it would show 1.928 in a
+    /// region that defaults to dots even when the user chose commas); NumberFormatter
+    /// honors them.
+    var grouped: String { Self.formatter.string(from: NSNumber(value: self)) ?? String(self) }
+
+    private static let formatter: NumberFormatter = {
+        let f = NumberFormatter()
+        f.numberStyle = .decimal
+        f.locale = .autoupdatingCurrent
+        return f
+    }()
 }

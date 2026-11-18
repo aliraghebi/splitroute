@@ -211,6 +211,27 @@ func (es *Entries) Add(e Entry) {
 	}
 }
 
+// All returns the entries one by one, IPv4, IPv6, exact names, suffixes, ASNs.
+func (es Entries) All() []Entry {
+	out := make([]Entry, 0, len(es.V4)+len(es.V6)+len(es.Domains)+len(es.Suffixes)+len(es.ASNs))
+	for _, p := range es.V4 {
+		out = append(out, Entry{Kind: CIDR, Prefix: p})
+	}
+	for _, p := range es.V6 {
+		out = append(out, Entry{Kind: CIDR, Prefix: p})
+	}
+	for _, n := range es.Domains {
+		out = append(out, Entry{Kind: Domain, Name: n})
+	}
+	for _, n := range es.Suffixes {
+		out = append(out, Entry{Kind: DomainSuffix, Name: n})
+	}
+	for _, as := range es.ASNs {
+		out = append(out, Entry{Kind: ASN, AS: as})
+	}
+	return out
+}
+
 // Unrouted describes the entries route mode can't use yet (everything but
 // IPv4), e.g. "2 domains, 1 IPv6". Empty if there are none.
 func (es Entries) Unrouted() string {

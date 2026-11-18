@@ -208,7 +208,8 @@ func (a *app) printLists() error {
 	}
 	fmt.Println("Lists (only their IPv4 ranges are routed; domain-only lists have no effect):")
 	for _, n := range names {
-		fmt.Println("  " + n)
+		i := lists.Describe(n)
+		fmt.Printf("  %-14s %s\n", n, i.Title)
 	}
 	return nil
 }

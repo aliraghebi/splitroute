@@ -15,13 +15,13 @@ and imports, and a redesigned macOS settings app. Later: our own tunnels and mob
 | `internal/rules/` | Pure model: `Action`, typed entries (`entry.go`: CIDR, domain, domain suffix, ASN; `ParseEntry` syntax, floors, reserved ranges), `Route`, `Plan` and the route cap |
 | `internal/config/` | `Config` type, `Validate`, JSON and 0.1 `list = action` parsing (import and first-run migration), presets, pure list edits (`edit.go`: create, enable, remove, rename, action, move, add/remove entries) shared by the CLI and the socket |
 | `internal/store/` | Settings database (SQLite, `modernc.org/sqlite`): schema in `migrations/*.sql` (applied by `PRAGMA user_version`), `Init`/`Config`/`Update` (one transaction), `Changed` (`PRAGMA data_version`); imports (`imports.go`): state, entries, `SaveDownload`, `MarkChecked`, `Due` |
-| `internal/lists/` | Release lists: download, `SHA256SUMS` check, last-good cache, `.list` parsing. Imports: `ParseText` (entries, hosts files, domain sets; fixtures in `testdata/`), `FetchImport` (conditional GET, limits), `CheckImport` |
+| `internal/lists/` | Release lists: download, `SHA256SUMS` check, last-good cache, `.list` parsing, `Catalog` (titles, descriptions, suggested actions; shown by the app and `splitroute lists`). Imports: `ParseText` (entries, hosts files, domain sets; fixtures in `testdata/`), `FetchImport` (conditional GET, limits), `CheckImport` |
 | `internal/state/` | Saved state file and the lock around route changes |
 | `internal/platform/` | OS-specific: command runner types, gateway/VPN detection and parsers, route socket (`netwatch_{darwin,linux}.go`), launchd/systemd files |
 | `internal/engine/route/` | Route-mode engine: diff (`Changes`), per-OS command builders, apply, remove, presence check |
-| `internal/api/` | Control socket for the menu bar app: one JSON request/response per connection, whole-config and per-list edit commands; `Status` wire type |
+| `internal/api/` | Control socket for the menu bar app: one JSON request/response per connection, whole-config and per-list edit commands (`list_create` with `text` parses a file's contents like an import), `lists` with the catalog; `Status` wire type |
 | `internal/fileutil/` | Atomic file write |
-| `macos/` | Swift menu bar app (SwiftPM, macOS 13+): AppKit status item, SwiftUI settings (`SettingsView.swift` sidebar, one `*Page.swift` per page, shared rows in `Components.swift`), socket client in `Daemon.swift`. `build-app.sh` bundles the Go binary into `Splitroute.app` and the DMG; `assets/` draws the app icon and DMG background (Swift scripts) and holds the `dmgbuild` layout; `splitroute.rb.in` is the cask |
+| `macos/` | Swift menu bar app (SwiftPM, macOS 13+): AppKit status item, SwiftUI settings (`SettingsView.swift` sidebar, one `*Page.swift` per page, `AddListSheet.swift` for adding lists, shared rows in `Components.swift`), socket client in `Daemon.swift`. `build-app.sh` bundles the Go binary into `Splitroute.app` and the DMG; `assets/` draws the app icon and DMG background (Swift scripts) and holds the `dmgbuild` layout; `splitroute.rb.in` is the cask |
 
 ## Rules
 
