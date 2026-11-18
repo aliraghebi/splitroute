@@ -46,14 +46,15 @@ an update, to restart the service on the new version).
 
 - The menu bar icon shows a green dot when routes are active, red when turned off or the service isn't
   running, and orange when something needs attention.
-- **Settings** has pages for General (on/off, preset, startup), Lists (release lists), My Lists (custom
-  lists and imports from a URL), Status, Advanced (list source, log file, the service) and About. Changes
+- **Open App** (menu bar) opens the window on Status; it also has General (on/off, preset, startup), Lists
+  (release lists), My Lists (custom lists and imports from a URL), Advanced (list source, log file, the service), and About under the app name at the bottom, with a search field at the top. Changes
   are sent to the service as you make them; if it refuses one, the reason shows under that row.
 - The service runs on its own, so quitting the app doesn't stop routing by itself. While routes are active,
-  **Quit** asks whether to turn them off first (**Settings → When quitting while routing** changes the default).
+  **Quit** asks whether to turn them off first (**General → When quitting while routing** changes the default).
   With **Turn on routing when the app opens**, opening the app turns routing back on, so the app's lifetime
   can match routing's.
 - The app opens at login after the first install, so the menu bar icon shows the routing state after a restart.
+  At login only the icon appears; opening the app yourself (Spotlight, Finder, Launchpad) opens the window.
 - The app is not notarized; the cask removes the quarantine flag so macOS opens it. From the DMG, macOS
   refuses to open it the first time: run `xattr -dr com.apple.quarantine /Applications/Splitroute.app`, or
   click **Open Anyway** in System Settings → Privacy & Security.

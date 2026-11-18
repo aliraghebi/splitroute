@@ -14,13 +14,13 @@ struct AdvancedPage: View {
 
     var body: some View {
         Form {
-            PageHeader(page: .advanced)
             if model.ready {
                 Section {
                     SettingRow("Release URL", description: "Where release lists and their SHA256SUMS are downloaded from (https only). Empty: the routing-rules releases.",
                                error: model.error("baseURL"))
                     TextField("Release URL", text: $baseURL, prompt: Text(Self.defaultBaseURL))
                         .labelsHidden()
+                        .fontDesign(.monospaced)
                         .onSubmit(save)
                     HStack {
                         Spacer()

@@ -5,11 +5,10 @@ struct StatusPage: View {
 
     var body: some View {
         Form {
-            PageHeader(page: .status)
             if let s = model.status {
                 Section {
                     ValueRow("Routing", s.enabled ? "On" : "Off", description: model.summary)
-                    ValueRow("Gateway", s.gateway.map { "\($0.ip) on \($0.iface)" } ?? "None", description: s.gatewayError)
+                    ValueRow("Gateway", s.gateway.map { "\($0.ip) on \($0.iface)" } ?? "None", description: s.gatewayError, mono: true)
                     ValueRow("VPN", s.vpn ?? "None detected")
                     ValueRow("Routes", s.routes.formatted(), description: s.missing ? "Some routes are missing from the routing table; re-applying." : nil)
                     ValueRow("Release lists downloaded", parseGoTime(s.fetched).map(relative) ?? "Never")

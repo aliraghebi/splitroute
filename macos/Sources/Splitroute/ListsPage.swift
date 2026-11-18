@@ -14,7 +14,6 @@ struct ListsPage: View {
 
     var body: some View {
         Form {
-            PageHeader(page: .lists)
             if !model.ready {
                 ServiceUnavailable()
             } else {
@@ -37,12 +36,9 @@ struct ListsPage: View {
                 }
                 Section {
                     SettingRow("Add a list", description: addDescription, error: model.error("lists")) {
-                        Menu("Add") {
-                            ForEach(missing, id: \.self) { n in
-                                Button(n) { Task { await model.enableRelease(n) } }
-                            }
+                        SelectMenu(title: "Add", options: missing, label: { $0 }) { n in
+                            Task { await model.enableRelease(n) }
                         }
-                        .fixedSize()
                         .disabled(missing.isEmpty || model.busy)
                     }
                 }

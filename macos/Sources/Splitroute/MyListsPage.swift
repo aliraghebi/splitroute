@@ -13,7 +13,6 @@ struct MyListsPage: View {
 
     var body: some View {
         Form {
-            PageHeader(page: .myLists)
             if !model.ready {
                 ServiceUnavailable()
             } else {

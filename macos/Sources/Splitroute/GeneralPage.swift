@@ -9,7 +9,6 @@ struct GeneralPage: View {
 
     var body: some View {
         Form {
-            PageHeader(page: .general)
             if model.status == nil {
                 ServiceUnavailable()
             } else {
@@ -45,12 +44,10 @@ struct GeneralPage: View {
     private var presetSection: some View {
         Section {
             SettingRow("Preset", description: presetDescription, error: model.error("preset")) {
-                Picker("Preset", selection: $presetID) {
-                    Text("Choose…").tag("")
-                    ForEach(model.presets) { Text($0.name).tag($0.id) }
-                }
-                .labelsHidden()
-                .fixedSize()
+                SelectMenu(title: model.presets.first { $0.id == presetID }?.name ?? "Choose…",
+                           options: model.presets.map(\.id),
+                           label: { id in model.presets.first { $0.id == id }?.name ?? id },
+                           selected: presetID) { presetID = $0 }
                 Button("Apply…") { confirmPreset = true }
                     .disabled(presetID.isEmpty || model.busy)
             }
@@ -71,6 +68,8 @@ struct GeneralPage: View {
         return p.lists.map { "\($0.action.label): \($0.name)" }.joined(separator: " · ")
     }
 
+    private static let quitLabels = ["": "Ask", "turnOff": "Turn off routing", "keep": "Keep routing"]
+
     private var appSection: some View {
         Section {
             SettingRow("Open at login", description: "Show the routing state in the menu bar after you log in.") {
@@ -84,13 +83,8 @@ struct GeneralPage: View {
                     .toggleStyle(.switch)
             }
             SettingRow("When quitting while routing", description: "The service runs on its own: with Keep routing, quitting only closes the menu bar icon.") {
-                Picker("When quitting while routing", selection: $quitAction) {
-                    Text("Ask").tag("")
-                    Text("Turn off routing").tag("turnOff")
-                    Text("Keep routing").tag("keep")
-                }
-                .labelsHidden()
-                .fixedSize()
+                SelectMenu(title: Self.quitLabels[quitAction] ?? "Ask", options: ["", "turnOff", "keep"],
+                           label: { Self.quitLabels[$0] ?? $0 }, selected: quitAction) { quitAction = $0 }
             }
         } header: {
             Text("App")

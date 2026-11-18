@@ -15,7 +15,7 @@ struct AboutPage: View {
                     Image(nsImage: NSApp.applicationIconImage)
                         .resizable()
                         .frame(width: 96, height: 96)
-                    Text("Splitroute").font(.title2.weight(.semibold))
+                    Text("Splitroute").font(.title2.weight(.semibold)).fontDesign(.rounded)
                     Text("Version \(AppModel.appVersion)").foregroundStyle(.secondary)
                     if let v = model.status?.version, v != AppModel.appVersion {
                         Text("Service version \(v)").font(.subheadline).foregroundStyle(.secondary)
