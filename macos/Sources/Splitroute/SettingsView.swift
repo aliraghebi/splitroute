@@ -222,6 +222,15 @@ struct ServiceUnavailable: View {
                     Button("Open Login Items") { model.openLoginItems() }
                         .prominent()
                 }
+            } else if model.serviceNotStarting {
+                SettingRow("The Splitroute service isn't starting",
+                           description: model.appQuarantined
+                               ? "macOS blocks it because the app is still marked as downloaded from the internet. In Terminal, run: xattr -dr com.apple.quarantine \(Bundle.main.bundlePath)"
+                               : "It's allowed but launchd can't start it. Check it under Allow in the Background, and the log at /var/log/splitroute.log.",
+                           error: model.actionError) {
+                    Button("Open Login Items") { model.openLoginItems() }
+                        .prominent()
+                }
             } else {
                 SettingRow(model.connError?.localizedDescription ?? "Connecting to the service…",
                            description: "Splitroute runs as a system service so it can change routes. You allow it once in System Settings > Login Items.",

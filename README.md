@@ -65,7 +65,8 @@ Login Items. Turn the service off there, or with **Advanced → Uninstall servic
   At login only the icon appears; opening the app yourself (Spotlight, Finder, Launchpad) opens the window.
 - The app is not notarized; the cask removes the quarantine flag so macOS opens it. From the DMG, macOS
   refuses to open it the first time: run `xattr -dr com.apple.quarantine /Applications/Splitroute.app`, or
-  click **Open Anyway** in System Settings → Privacy & Security.
+  click **Open Anyway** in System Settings → Privacy & Security. Once it runs, the app removes the flag from its
+  own files, so macOS also lets its service start.
 
 ### Command line only
 

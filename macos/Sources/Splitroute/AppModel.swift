@@ -245,6 +245,14 @@ final class AppModel: ObservableObject {
     /// Registered, but macOS waits for the user to allow it in Login Items.
     var serviceNeedsApproval: Bool { Self.daemon.status == .requiresApproval }
 
+    /// Registered and allowed, yet not answering: launchd can't start it.
+    var serviceNotStarting: Bool { Self.daemon.status == .enabled && connError == .notRunning }
+
+    /// The app still has the quarantine flag of a browser download (a DMG copied
+    /// by hand; the Homebrew cask removes it). launchd then refuses to start the
+    /// service binary, which isn't notarized.
+    var appQuarantined: Bool { getxattr(Bundle.main.bundlePath, "com.apple.quarantine", nil, 0, 0, 0) >= 0 }
+
     func openLoginItems() { SMAppService.openSystemSettingsLoginItems() }
 
     func installService() async {

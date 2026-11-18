@@ -45,6 +45,13 @@ func draw() {
     head.lineCapStyle = .round
     head.lineJoinStyle = .round
     head.stroke()
+
+    // Help line under the icon labels, clear of the bottom edge: Finder's path
+    // and status bars, when the user has them on, cover the last ~88 pt.
+    let help = "Drag Splitroute to Applications to install" as NSString
+    let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.secondaryLabelColor]
+    let w = help.size(withAttributes: attrs).width
+    help.draw(at: NSPoint(x: (size.width - w) / 2, y: flip(248)), withAttributes: attrs)
 }
 
 func png(scale: CGFloat) -> Data {

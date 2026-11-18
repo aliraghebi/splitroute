@@ -15,6 +15,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         let e = NSAppleEventManager.shared().currentAppleEvent
         launchedAtLogin = e?.eventID == kAEOpenApplication
             && e?.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue == keyAELaunchedAsLogInItem
+        removeQuarantine()
+    }
+
+    /// A DMG copied by hand keeps the browser's quarantine flag on every file,
+    /// and launchd then refuses to start the bundled service binary (it isn't
+    /// notarized: no Developer ID). macOS only runs the app at all after the user
+    /// allowed it ("Open Anyway"), so clear the flag on our own bundle, as the
+    /// Homebrew cask does. A new download arrives quarantined again. Fails quietly
+    /// if the bundle isn't writable; the service page then shows the command.
+    private func removeQuarantine() {
+        let root = Bundle.main.bundlePath
+        let name = "com.apple.quarantine"
+        guard getxattr(root, name, nil, 0, 0, XATTR_NOFOLLOW) >= 0 else { return }
+        var paths = [root]
+        if let e = FileManager.default.enumerator(atPath: root) {
+            for case let rel as String in e { paths.append(root + "/" + rel) }
+        }
+        for p in paths { removexattr(p, name, XATTR_NOFOLLOW) }
     }
 
     /// Opening the app again (Spotlight, Finder, Dock, `open`) while it runs shows the window.
