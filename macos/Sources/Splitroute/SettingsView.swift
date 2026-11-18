@@ -215,13 +215,22 @@ struct ServiceUnavailable: View {
 
     var body: some View {
         Section {
-            SettingRow(model.connError?.localizedDescription ?? "Connecting to the service…",
-                       description: "Splitroute runs as a system service so it can change routes. Installing it asks for your administrator password once.",
-                       error: model.actionError) {
-                if model.connError == .notRunning {
-                    Button("Install Service") { Task { await model.installService() } }
+            if model.serviceNeedsApproval {
+                SettingRow("Allow the Splitroute service",
+                           description: "Turn on Splitroute under Allow in the Background in System Settings > General > Login Items. It changes routes, so it runs as a system service.",
+                           error: model.actionError) {
+                    Button("Open Login Items") { model.openLoginItems() }
                         .prominent()
-                        .disabled(model.busy)
+                }
+            } else {
+                SettingRow(model.connError?.localizedDescription ?? "Connecting to the service…",
+                           description: "Splitroute runs as a system service so it can change routes. You allow it once in System Settings > Login Items.",
+                           error: model.actionError) {
+                    if model.connError == .notRunning {
+                        Button("Install Service") { Task { await model.installService() } }
+                            .prominent()
+                            .disabled(model.busy)
+                    }
                 }
             }
         }

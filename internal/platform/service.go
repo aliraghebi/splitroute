@@ -11,6 +11,13 @@ import (
 
 const ServiceLabel = "io.github.aliraghebi.splitroute"
 
+// ManagedByApp reports whether `launchctl print system/<label>` output is a
+// job the menu bar app registered with SMAppService (macOS Login Items), which
+// the CLI must not replace or remove.
+func ManagedByApp(launchctlPrint string) bool {
+	return strings.Contains(launchctlPrint, "managed_by = com.apple.xpc.ServiceManagement")
+}
+
 // ServicePath is where the service file lives on goos.
 func ServicePath(goos string) string {
 	if goos == "linux" {

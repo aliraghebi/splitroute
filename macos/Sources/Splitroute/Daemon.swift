@@ -238,6 +238,9 @@ enum Daemon {
         return (c, r.edit)
     }
 
+    /// Asks the service to exit keeping its routes; launchd starts the updated binary.
+    static func restart() async throws { _ = try await send(Request(cmd: "restart")) }
+
     static func refreshImport(_ name: String) async throws { _ = try await send(Request(cmd: "list_refresh", name: name)) }
 
     private static func send(_ req: Request) async throws -> Response {

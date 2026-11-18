@@ -3,6 +3,7 @@
 package main
 
 import (
+	"errors"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -239,5 +240,39 @@ func TestListCommand(t *testing.T) {
 	}
 	if cfg, _ := dry.LoadConfig(); len(cfg.Lists) != 1 {
 		t.Fatalf("dry-run saved: %+v", cfg)
+	}
+}
+
+func TestServiceManagedByApp(t *testing.T) {
+	tests := []struct {
+		name    string
+		print   string
+		printOK bool
+		refused bool
+	}{
+		{"app registered the job", "\ttype = Submitted\n\tmanaged_by = com.apple.xpc.ServiceManagement\n", true, true},
+		{"CLI installed the job", "\tpath = /Library/LaunchDaemons/io.github.aliraghebi.splitroute.plist\n\ttype = LaunchDaemon\n", true, false},
+		{"no job", "", false, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := testApp(t, true, false)
+			a.goos = "darwin"
+			a.query = func(name string, args ...string) (string, error) {
+				if name == "launchctl" && len(args) > 0 && args[0] == "print" {
+					if !tt.printOK {
+						return "", errors.New("not loaded")
+					}
+					return tt.print, nil
+				}
+				return "", nil
+			}
+			for _, cmd := range []func() error{a.install, a.uninstall} {
+				err := cmd()
+				if refused := errors.Is(err, errAppManaged); refused != tt.refused {
+					t.Fatalf("refused=%v, err=%v", refused, err)
+				}
+			}
+		})
 	}
 }

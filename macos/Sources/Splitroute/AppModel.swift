@@ -228,43 +228,89 @@ final class AppModel: ObservableObject {
         await refreshStatus()
     }
 
-    // MARK: Service install (root, via the standard admin password prompt)
+    // MARK: Service install (SMAppService: Login Items, approved once by the user)
 
-    /// The daemon binary shipped inside the app bundle.
-    private var daemonPath: String? { Bundle.main.path(forResource: "splitroute", ofType: nil) }
-
-    private static let servicePlist = "/Library/LaunchDaemons/io.github.aliraghebi.splitroute.plist"
+    /// The routing service, bundled at Contents/Library/LaunchDaemons (build-app.sh).
+    private static let daemon = SMAppService.daemon(plistName: "io.github.aliraghebi.splitroute.plist")
+    /// Where `splitroute install` (and app versions before 0.9) put the service.
+    private static let legacyPlist = "/Library/LaunchDaemons/io.github.aliraghebi.splitroute.plist"
     private static let promptedKey = "autoInstallPromptedVersion"
     private static let uninstalledKey = "serviceUninstalledByUser"
 
+    private var legacyInstalled: Bool { FileManager.default.fileExists(atPath: Self.legacyPlist) }
+
+    /// The daemon binary shipped inside the app bundle (runs the one-time migration).
+    private var daemonPath: String? { Bundle.main.path(forResource: "splitroute", ofType: nil) }
+
+    /// Registered, but macOS waits for the user to allow it in Login Items.
+    var serviceNeedsApproval: Bool { Self.daemon.status == .requiresApproval }
+
+    func openLoginItems() { SMAppService.openSystemSettingsLoginItems() }
+
     func installService() async {
-        let fresh = !FileManager.default.fileExists(atPath: Self.servicePlist)
+        let fresh = Self.daemon.status != .enabled && !legacyInstalled
         UserDefaults.standard.removeObject(forKey: Self.uninstalledKey)
-        await runPrivileged("install", prompt: "Splitroute needs your password to install its routing service.")
+        if legacyInstalled {
+            // Same label: the old launchd job must go before the app's can load.
+            // Its stop runs `down`; the new service re-applies the routes.
+            await runPrivileged("uninstall", prompt: "Splitroute needs your password once to move its routing service to Login Items.")
+            guard !legacyInstalled else { return } // canceled or failed; runPrivileged set the error
+        }
+        busy = true
+        defer { busy = false }
+        do {
+            try Self.daemon.register()
+        } catch where Self.daemon.status == .requiresApproval {
+            // The first registration "fails" until the user allows it.
+        } catch {
+            actionError = "Couldn't register the service: \(error.localizedDescription)"
+            return
+        }
+        actionError = nil
+        if Self.daemon.status == .requiresApproval { openLoginItems() }
+        try? await Task.sleep(nanoseconds: 1_500_000_000) // the service opens its socket
+        await refreshStatus()
         // On a first install, open at login so the routing state stays visible
         // after a reboot. Not on reinstalls: the user may have turned it off.
         if fresh, connError == nil, !launchAtLogin { setLaunchAtLogin(true) }
     }
 
-    func uninstallService() async {
-        UserDefaults.standard.set(true, forKey: Self.uninstalledKey)
-        await runPrivileged("uninstall", prompt: "Splitroute needs your password to remove its routing service.")
+    /// Runs the app's copy of the service binary: after an app update the
+    /// service keeps running the old one until it restarts. The service exits
+    /// keeping its routes and launchd starts it again (KeepAlive). A service
+    /// still installed the old way is moved to Login Items instead.
+    func restartService() async {
+        guard Self.daemon.status == .enabled, !legacyInstalled else { return await installService() }
+        await perform { try await Daemon.restart() }
+        try? await Task.sleep(nanoseconds: 2_000_000_000)
+        await refreshStatus()
     }
 
-    /// Asks for the password without a click: on first launch when the service
-    /// was never installed, and after an app upgrade while the old daemon runs.
-    /// At most once per app version, so a canceled prompt doesn't return on every
-    /// launch. The plist check keeps a daemon that is still starting at login from
-    /// triggering it, and a service the user removed stays removed.
+    func uninstallService() async {
+        UserDefaults.standard.set(true, forKey: Self.uninstalledKey)
+        if legacyInstalled {
+            await runPrivileged("uninstall", prompt: "Splitroute needs your password to remove its routing service.")
+            return
+        }
+        // launchd stops the job; its SIGTERM handler removes the routes.
+        await perform { try await Self.daemon.unregister() }
+    }
+
+    /// Without a click: installs on first launch when the service was never
+    /// installed, and restarts it after an app upgrade while the old binary runs.
+    /// At most once per app version, so a canceled prompt or a failing restart
+    /// doesn't repeat every poll; a service the user removed stays removed.
     private func autoInstallIfNeeded() async {
         let d = UserDefaults.standard
         guard !busy, d.string(forKey: Self.promptedKey) != Self.appVersion else { return }
+        let st = Self.daemon.status
         let neverInstalled = connError == .notRunning
-            && !FileManager.default.fileExists(atPath: Self.servicePlist)
+            && st != .enabled && st != .requiresApproval
+            && !legacyInstalled
             && !d.bool(forKey: Self.uninstalledKey)
         guard neverInstalled || serviceOutdated else { return }
         d.set(Self.appVersion, forKey: Self.promptedKey)
-        await installService()
+        if neverInstalled { await installService() } else { await restartService() }
     }
 
     private var openChecked = false
@@ -284,8 +330,8 @@ final class AppModel: ObservableObject {
         }
         busy = true
         defer { busy = false }
-        // `install` points the service at this binary, so it follows app updates
-        // as long as the app stays at the same path.
+        // Only the move from the old launchd install (and removing one) needs root
+        // this way; SMAppService handles the rest without a password.
         let shell = "'\(exe.replacingOccurrences(of: "'", with: "'\\''"))' \(command)"
         let script = "do shell script \"\(shell.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\""))\" with prompt \"\(prompt)\" with administrator privileges"
         let result: (Int32, String) = await Task.detached {

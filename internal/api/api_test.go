@@ -24,6 +24,7 @@ func (noBackend) UpdateConfig(func(config.Config) (config.Config, error)) (confi
 }
 func (noBackend) AvailableLists() ([]string, error) { panic("unexpected") }
 func (noBackend) RefreshImport(string) error        { panic("unexpected") }
+func (noBackend) Restart() error                    { panic("unexpected") }
 
 func TestHandleSocket(t *testing.T) {
 	srv, cli := net.Pipe()
@@ -43,6 +44,12 @@ type memBackend struct {
 	noBackend
 	cfg       config.Config
 	refreshed []string
+	restarts  int
+}
+
+func (m *memBackend) Restart() error {
+	m.restarts++
+	return nil
 }
 
 func (m *memBackend) RefreshImport(name string) error {
@@ -201,5 +208,14 @@ func TestListsCatalog(t *testing.T) {
 	}
 	if c := r.Catalog[1]; c.Name != "brand-new" || c.Title != "brand-new" || c.Description != "" {
 		t.Fatalf("unknown list falls back to its name: %+v", c)
+	}
+}
+
+func TestRestart(t *testing.T) {
+	m := &memBackend{cfg: config.Default()}
+	before := m.cfg
+	r := Respond(m, Request{Cmd: "restart"})
+	if !r.OK || m.restarts != 1 || r.Config != nil || !reflect.DeepEqual(m.cfg, before) {
+		t.Fatalf("restart: %+v, %d restarts", r, m.restarts)
 	}
 }

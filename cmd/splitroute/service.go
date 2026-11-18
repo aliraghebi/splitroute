@@ -18,7 +18,23 @@ import (
 
 func (a *app) servicePath() string { return platform.ServicePath(a.goos) }
 
+// errAppManaged: the menu bar app registered the service with SMAppService;
+// a CLI install would replace its job and uninstall would fight Login Items.
+var errAppManaged = errors.New("the Splitroute app manages the service: use the app (Advanced) or System Settings > General > Login Items")
+
+// appManaged reports whether the loaded macOS job belongs to the app.
+func (a *app) appManaged() bool {
+	if a.goos != "darwin" {
+		return false
+	}
+	out, err := a.query("launchctl", "print", "system/"+platform.ServiceLabel)
+	return err == nil && platform.ManagedByApp(out)
+}
+
 func (a *app) install() error {
+	if a.appManaged() {
+		return errAppManaged
+	}
 	self, err := os.Executable()
 	if err != nil {
 		return err
@@ -61,6 +77,9 @@ func (a *app) waitUnloaded() {
 }
 
 func (a *app) uninstall() error {
+	if a.appManaged() {
+		return errAppManaged
+	}
 	// Stopping the service runs its cleanup (`down`).
 	if a.goos == "linux" {
 		_ = a.change("systemctl", []string{"disable", "--now", "splitroute"}, "")

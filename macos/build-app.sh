@@ -23,6 +23,10 @@ done
 lipo -create build/splitroute-arm64 build/splitroute-amd64 -output "$APP/Contents/Resources/splitroute"
 rm build/splitroute-arm64 build/splitroute-amd64
 
+# The service plist the app registers with SMAppService (Login Items).
+mkdir -p "$APP/Contents/Library/LaunchDaemons"
+cp LaunchDaemon.plist "$APP/Contents/Library/LaunchDaemons/io.github.aliraghebi.splitroute.plist"
+
 codesign --force --sign - "$APP/Contents/Resources/splitroute"
 codesign --force --sign - "$APP"
 

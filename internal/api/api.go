@@ -54,6 +54,9 @@ type Backend interface {
 	AvailableLists() ([]string, error)
 	// RefreshImport marks an import to be downloaded on the next pass.
 	RefreshImport(name string) error
+	// Restart makes the service exit without removing routes; its service
+	// manager starts the updated binary.
+	Restart() error
 }
 
 type Request struct {
@@ -183,6 +186,8 @@ func Respond(b Backend, req Request) Response {
 		}
 	case "presets":
 		r.Presets = config.Presets
+	case "restart":
+		err = b.Restart()
 	case "list_refresh":
 		if req.Name == "" {
 			return Response{Error: "list_refresh needs a name"}

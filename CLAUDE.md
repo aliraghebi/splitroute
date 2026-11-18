@@ -21,7 +21,7 @@ and imports, and a redesigned macOS settings app. Later: our own tunnels and mob
 | `internal/engine/route/` | Route-mode engine: diff (`Changes`), per-OS command builders, apply, remove, presence check |
 | `internal/api/` | Control socket for the menu bar app: one JSON request/response per connection, whole-config and per-list edit commands (`list_create` with `text` parses a file's contents like an import), `lists` with the catalog; `Status` wire type |
 | `internal/fileutil/` | Atomic file write |
-| `macos/` | Swift menu bar app (SwiftPM, macOS 13+): AppKit status item, SwiftUI settings (`SettingsView.swift` sidebar, one `*Page.swift` per page, `AddListSheet.swift` for adding lists, shared rows in `Components.swift`), socket client in `Daemon.swift`. `build-app.sh` bundles the Go binary into `Splitroute.app` and the DMG; `assets/` draws the app icon and DMG background (Swift scripts) and holds the `dmgbuild` layout; `splitroute.rb.in` is the cask |
+| `macos/` | Swift menu bar app (SwiftPM, macOS 13+): AppKit status item, SwiftUI settings (`SettingsView.swift` sidebar, one `*Page.swift` per page, `AddListSheet.swift` for adding lists, shared rows in `Components.swift`), socket client in `Daemon.swift`. `build-app.sh` bundles the Go binary into `Splitroute.app` (with `LaunchDaemon.plist`, which the app registers with SMAppService; upgrades restart the service through the socket's `restart`) and the DMG; `assets/` draws the app icon and DMG background (Swift scripts) and holds the `dmgbuild` layout; `splitroute.rb.in` is the cask |
 
 ## Rules
 

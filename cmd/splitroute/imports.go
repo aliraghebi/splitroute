@@ -126,3 +126,19 @@ func (a *app) wake() {
 		}
 	}
 }
+
+// Restart asks the running service to exit without removing its routes, so
+// the service manager starts it again from the updated binary (app upgrades).
+// The exit waits a moment so the socket reply goes out first.
+func (a *app) Restart() error {
+	if a.restart == nil {
+		return errors.New("restart works only on the running service")
+	}
+	time.AfterFunc(300*time.Millisecond, func() {
+		select {
+		case a.restart <- struct{}{}:
+		default:
+		}
+	})
+	return nil
+}

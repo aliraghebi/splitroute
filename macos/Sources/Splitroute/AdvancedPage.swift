@@ -47,9 +47,9 @@ struct AdvancedPage: View {
                 Text("Files")
             }
             Section {
-                SettingRow("Reinstall service", description: "Restarts the service from this app's copy of splitroute. Asks for your password.",
+                SettingRow("Restart service", description: "Restarts the service from this app's copy of splitroute. Routes stay in place. Turn it off or on in System Settings > General > Login Items.",
                            error: model.actionError) {
-                    Button("Reinstall…") { Task { await model.installService() } }
+                    Button("Restart") { Task { await model.restartService() } }
                         .disabled(model.busy)
                 }
                 SettingRow("Uninstall service", description: "Stops the service and removes its routes. Your settings are kept.") {
@@ -65,7 +65,7 @@ struct AdvancedPage: View {
         .confirmationDialog("Uninstall the Splitroute service?", isPresented: $confirmUninstall) {
             Button("Uninstall", role: .destructive) { Task { await model.uninstallService() } }
         } message: {
-            Text("Routing stops until you install the service again. Asks for your password.")
+            Text("Routing stops and its routes are removed until you install the service again.")
         }
     }
 

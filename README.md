@@ -41,8 +41,11 @@ This installs **Splitroute.app** (a menu bar app, macOS 13 or later) and the `sp
 Homebrew, download `Splitroute_<version>_macos.dmg` from the
 [releases page](https://github.com/aliraghebi/splitroute/releases) and drag the app to Applications.
 
-Open the app: it asks for your administrator password once to install and start the service (and again after
-an update, to restart the service on the new version).
+Open the app: it registers its routing service and macOS asks you to allow it once, under **Allow in the
+Background** in System Settings → General → Login Items (the app opens that page). After an update the app
+restarts the service on the new version by itself, without a password. If you installed the service with an
+older version of the app or with `sudo splitroute install`, the app asks for your password once to move it to
+Login Items. Turn the service off there, or with **Advanced → Uninstall service**.
 
 - The menu bar icon shows a green dot when routes are active, red when turned off or the service isn't
   running, and orange when something needs attention.
@@ -80,7 +83,7 @@ go install github.com/aliraghebi/splitroute/cmd/splitroute@latest   # or build i
 sudo splitroute up          # download the lists and add the routes
 splitroute status           # gateway, VPN, applied routes
 sudo splitroute down        # remove every route it added
-sudo splitroute install     # run as a service (launchd / systemd): now and at boot
+sudo splitroute install     # run as a service (launchd / systemd): now and at boot; not while the app manages it
 sudo splitroute uninstall   # stop the service and remove the routes
 splitroute lists            # lists in the latest routing-rules release, with their titles
 splitroute preset           # presets; `sudo splitroute preset <id>` applies one

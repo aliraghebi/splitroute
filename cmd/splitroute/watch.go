@@ -27,6 +27,7 @@ func (a *app) watch() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	a.reload = make(chan struct{}, 1)
+	a.restart = make(chan struct{}, 1)
 	if ln, err := api.Listen(a.goos); err != nil {
 		log.Printf("warning: control socket: %v (the menu bar app can't connect)", err)
 	} else {
@@ -60,6 +61,11 @@ func (a *app) watch() error {
 		select {
 		case <-ctx.Done():
 			return a.down()
+		case <-a.restart:
+			// launchd/systemd start the service again (KeepAlive, Restart=always),
+			// from the binary now on disk; it diffs against the saved state.
+			log.Print("restarting to run the updated binary; routes stay in place")
+			return nil
 		case <-a.reload:
 			refresh()
 			continue

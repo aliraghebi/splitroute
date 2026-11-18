@@ -33,7 +33,7 @@ struct GeneralPage: View {
             }
             if model.serviceOutdated, let v = model.status?.version {
                 SettingRow("Service update", description: "The service is version \(v); this app is \(AppModel.appVersion).") {
-                    Button("Update Service…") { Task { await model.installService() } }
+                    Button("Update Service") { Task { await model.restartService() } }
                         .disabled(model.busy)
                 }
             }

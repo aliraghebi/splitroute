@@ -116,6 +116,7 @@ type app struct {
 	dbMu    sync.Mutex
 	db      *store.Store  // opened on first use by settings()
 	reload  chan struct{} // set by watch: asks it to re-apply now
+	restart chan struct{} // set by watch: asks it to exit, keeping the routes
 	errMu   sync.Mutex
 	lastErr string // watch: the last failed apply, for status
 }

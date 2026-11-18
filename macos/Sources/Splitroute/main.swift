@@ -71,7 +71,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         menu.addItem(.separator())
         switch model.health {
         case .notRunning:
-            if model.connError == .notRunning {
+            if model.serviceNeedsApproval {
+                menu.addItem(action("Allow in Login Items…", #selector(openLoginItems)))
+            } else if model.connError == .notRunning {
                 menu.addItem(action("Install Service…", #selector(installService)))
             }
         case .off:
@@ -80,7 +82,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             menu.addItem(action("Turn Off", #selector(turnOff)))
         }
         if model.serviceOutdated {
-            menu.addItem(action("Update Service…", #selector(installService)))
+            menu.addItem(action("Update Service", #selector(restartService)))
         }
         menu.addItem(action("Open App", #selector(openSettings)))
         menu.addItem(.separator())
@@ -102,6 +104,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     @objc private func turnOn() { Task { await model.setEnabled(true) } }
     @objc private func turnOff() { Task { await model.setEnabled(false) } }
     @objc private func installService() { Task { await model.installService() } }
+    @objc private func restartService() { Task { await model.restartService() } }
+    @objc private func openLoginItems() { model.openLoginItems() }
     private static let quitActionKey = "quitAction" // "turnOff" or "keep", once "Don't ask again" was checked
 
     /// Quitting only removes the icon; the service keeps routing. While routes are
