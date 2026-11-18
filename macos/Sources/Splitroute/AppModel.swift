@@ -74,7 +74,12 @@ final class AppModel: ObservableObject {
         do {
             let s = try await Daemon.status()
             if s != status { status = s }
-            if connError != nil { connError = nil }
+            if let lost = connError {
+                connError = nil
+                // An action that failed only because the service was down (say,
+                // turning routing on while it was starting) is moot now.
+                if actionError == lost.localizedDescription { actionError = nil }
+            }
         } catch let e as DaemonError {
             if connError != e { connError = e }
             status = nil
