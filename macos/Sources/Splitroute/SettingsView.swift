@@ -1,13 +1,14 @@
 import SwiftUI
 
 enum Page: String, CaseIterable, Identifiable {
-    case status, general, lists, advanced, about
+    case status, general, lists, tunnels, advanced, about
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .general: return "General"
         case .lists: return "Lists"
+        case .tunnels: return "Tunnels"
         case .status: return "Status"
         case .advanced: return "Advanced"
         case .about: return "About"
@@ -18,6 +19,7 @@ enum Page: String, CaseIterable, Identifiable {
         switch self {
         case .general: return "Turn routing on or off, pick a preset, and choose how the app starts and quits."
         case .lists: return "Ready-made lists, lists imported from a URL or a file, and your own lists."
+        case .tunnels: return "OpenVPN profiles: connect, disconnect and see their state."
         case .status: return "What the service sees and the routes it has applied."
         case .advanced: return "List source, logs and the system service."
         case .about: return "Version and links."
@@ -28,6 +30,7 @@ enum Page: String, CaseIterable, Identifiable {
     var keywords: [String] {
         switch self {
         case .general: return ["Routing", "Service update", "Preset", "Open at login", "Turn on routing when the app opens", "When quitting while routing"]
+        case .tunnels: return ["OpenVPN", "Profile", ".ovpn", "Connect", "Credentials", "Keychain"]
         case .lists: return ["Add a list", "Ready-made", "Release lists", "Import", "URL", "File", "Custom", "Entries"]
         case .status: return ["Routing", "Gateway", "VPN", "Routes", "Release lists downloaded", "Service version"]
         case .advanced: return ["Release URL", "Log file", "Settings database", "Reinstall service", "Uninstall service"]
@@ -44,6 +47,7 @@ enum Page: String, CaseIterable, Identifiable {
         switch self {
         case .general: return "gearshape.fill"
         case .lists: return "list.bullet.rectangle.fill"
+        case .tunnels: return "lock.shield.fill"
         case .status: return "waveform.path.ecg"
         case .advanced: return "wrench.and.screwdriver.fill"
         case .about: return "info.circle.fill"
@@ -54,6 +58,7 @@ enum Page: String, CaseIterable, Identifiable {
         switch self {
         case .general: return .gray
         case .lists: return .blue
+        case .tunnels: return .orange
         case .status: return .green
         case .advanced: return .indigo
         case .about: return .teal
@@ -113,6 +118,7 @@ struct SettingsView: View {
                 switch page {
                 case .general: GeneralPage()
                 case .lists: ListsPage()
+                case .tunnels: TunnelsPage()
                 case .status: StatusPage()
                 case .advanced: AdvancedPage()
                 case .about: AboutPage()

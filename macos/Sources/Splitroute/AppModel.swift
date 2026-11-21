@@ -13,6 +13,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var available: [String] = []
     @Published private(set) var catalog: [ListInfo] = []
     @Published var actionError: String?
+    @Published fileprivate(set) var tunnelList: TunnelList?
+    fileprivate var tunnelSupplied: [String: Date] = [:]
     @Published private(set) var busy = false
     /// The daemon's last error per row or sheet (keys like "list:Work",
     /// "preset", "baseURL"), shown under that row until it next succeeds.
@@ -28,6 +30,10 @@ final class AppModel: ObservableObject {
             while let self {
                 await self.refreshStatus()
                 if self.settingsVisible, self.connError == nil, !self.busy { await self.reloadConfig() }
+                if self.connError == nil {
+                    await self.reloadTunnels()
+                    await self.supplyTunnelCredentials()
+                }
                 await self.autoInstallIfNeeded()
                 await self.turnOnAtOpenIfNeeded()
                 try? await Task.sleep(nanoseconds: Self.pollInterval)
@@ -383,5 +389,113 @@ final class AppModel: ObservableObject {
             actionError = "Launch at login: \(error.localizedDescription)"
         }
         objectWillChange.send()
+    }
+}
+
+
+// MARK: Tunnels (OpenVPN). Credentials live in the Keychain; the service only gets them to connect.
+
+extension TunnelSecrets {
+    var isEmpty: Bool { username.isEmpty && password.isEmpty && keyPassword.isEmpty }
+}
+
+extension AppModel {
+    var tunnels: [Tunnel] { tunnelList?.tunnels ?? [] }
+
+    func reloadTunnels() async {
+        do {
+            let l = try await Daemon.tunnels()
+            if l != tunnelList { tunnelList = l }
+            errors["tunnels"] = nil
+        } catch {
+            errors["tunnels"] = error.localizedDescription
+        }
+    }
+
+    /// A tunnel waiting for credentials that the Keychain has: send them, without asking.
+    /// At most every 10 s per tunnel, so a service that doesn't take them isn't hammered.
+    func supplyTunnelCredentials() async {
+        for t in tunnels where t.state == .needsAuth {
+            guard let s = TunnelKeychain.load(t.name) else { continue }
+            if let last = tunnelSupplied[t.name], Date().timeIntervalSince(last) < 10 { continue }
+            tunnelSupplied[t.name] = Date()
+            try? await Daemon.tunnelCredentials(t.name, secrets: s)
+        }
+    }
+
+    /// Connecting needs a prompt when the profile wants credentials and none are saved.
+    func needsCredentialPrompt(_ t: Tunnel) -> Bool {
+        (t.needsAuth || t.keyEncrypted) && TunnelKeychain.load(t.name) == nil
+    }
+
+    func connectTunnel(_ t: Tunnel, secrets: TunnelSecrets? = nil, remember: Bool = false) async {
+        if let secrets, remember { TunnelKeychain.save(t.name, secrets) }
+        errors["tunnel:\(t.name)"] = nil
+        do {
+            try await Daemon.tunnelConnect(t.name, secrets: secrets ?? TunnelKeychain.load(t.name))
+        } catch {
+            errors["tunnel:\(t.name)"] = error.localizedDescription
+            return
+        }
+        await followTunnel(t.name)
+    }
+
+    /// Re-reads the tunnel every second until it settles, so the switch reflects the progress.
+    private func followTunnel(_ name: String) async {
+        for _ in 0..<20 {
+            await reloadTunnels()
+            if let t = tunnels.first(where: { $0.name == name }), [.connected, .failed, .needsAuth, .disconnected].contains(t.state) { return }
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+        }
+    }
+
+    func disconnectTunnel(_ name: String) async {
+        await tunnelCall(name) { try await Daemon.tunnelDisconnect(name) }
+    }
+
+    func removeTunnel(_ name: String) async {
+        await tunnelCall(name) {
+            try await Daemon.tunnelRemove(name)
+            TunnelKeychain.delete(name)
+        }
+    }
+
+    func renameTunnel(_ name: String, to new: String) async -> String? {
+        do {
+            try await Daemon.tunnelRename(name, to: new)
+            TunnelKeychain.rename(name, to: new)
+            await reloadTunnels()
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
+    func setTunnelAutoConnect(_ name: String, _ on: Bool) async {
+        await tunnelCall(name) { try await Daemon.tunnelAutoConnect(name, on) }
+    }
+
+    func tunnelLogs(_ name: String) async -> [String] { (try? await Daemon.tunnelLogs(name)) ?? [] }
+
+    /// Returns the daemon's error, or nil when the tunnel was added.
+    func importTunnel(name: String, text: String, allowScripts: Bool, secrets: TunnelSecrets?) async -> String? {
+        do {
+            try await Daemon.tunnelImport(name: name, text: text, allowScripts: allowScripts)
+            if let secrets, !secrets.isEmpty { TunnelKeychain.save(name, secrets) }
+            await reloadTunnels()
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
+    func checkTunnel(text: String) async -> Result<TunnelCheck, Error> {
+        do { return .success(try await Daemon.tunnelCheck(text: text)) } catch { return .failure(error) }
+    }
+
+    private func tunnelCall(_ name: String, _ work: () async throws -> Void) async {
+        errors["tunnel:\(name)"] = nil
+        do { try await work() } catch { errors["tunnel:\(name)"] = error.localizedDescription }
+        await reloadTunnels()
     }
 }

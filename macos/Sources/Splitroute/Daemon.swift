@@ -132,6 +132,65 @@ struct Preset: Decodable, Identifiable, Hashable {
     var lists: [RouteList]
 }
 
+// Tunnels: mirror internal/api/tunnels.go.
+
+enum TunnelState: String, Codable {
+    case disconnected, connecting, needsAuth = "needs_auth", connected, reconnecting, failed
+}
+
+struct Tunnel: Decodable, Identifiable, Equatable {
+    var name: String
+    var remotes: [String]?
+    var needsAuth: Bool
+    var keyEncrypted: Bool
+    var scripts: [String]?
+    var autoConnect: Bool
+    var state: TunnelState
+    var error: String?
+    /// "auth" or "key" while state is needs_auth.
+    var need: String?
+    var localIP: String?
+    var remoteIP: String?
+    var since: String?
+    var bytesIn: UInt64?
+    var bytesOut: UInt64?
+    var id: String { name }
+
+    enum CodingKeys: String, CodingKey {
+        case name, remotes, needsAuth = "needs_auth", keyEncrypted = "key_encrypted", scripts,
+             autoConnect = "auto_connect", state, error, need, localIP = "local_ip", remoteIP = "remote_ip",
+             since, bytesIn = "bytes_in", bytesOut = "bytes_out"
+    }
+
+    var isActive: Bool { state != .disconnected && state != .failed }
+}
+
+struct TunnelList: Decodable, Equatable {
+    var tunnels: [Tunnel]
+    /// Why tunnels can't run here (OpenVPN missing or not matching the build).
+    var unavailable: String?
+}
+
+/// What a profile asks for, before it is imported.
+struct TunnelCheck: Decodable, Equatable {
+    var remotes: [String]?
+    var needsAuth: Bool
+    var keyEncrypted: Bool
+    var scripts: [String]?
+    var scriptSecurity: Int
+
+    enum CodingKeys: String, CodingKey {
+        case remotes, needsAuth = "needs_auth", keyEncrypted = "key_encrypted", scripts, scriptSecurity = "script_security"
+    }
+}
+
+/// Credentials for one connection. The service keeps them in memory only.
+struct TunnelSecrets: Codable, Equatable {
+    var username = ""
+    var password = ""
+    var keyPassword = ""
+}
+
 private struct Request: Encodable {
     var cmd: String
     var config: Config?
@@ -144,9 +203,14 @@ private struct Request: Encodable {
     var entries: [String]?
     var url: String?
     var text: String?
+    var username: String?
+    var password: String?
+    var keyPassword: String?
+    var allowScripts: Bool?
 
     enum CodingKeys: String, CodingKey {
-        case cmd, config, enabled, preset, name, newName = "new_name", action, position, entries, url, text
+        case cmd, config, enabled, preset, name, newName = "new_name", action, position, entries, url, text,
+             username, password, keyPassword = "key_password", allowScripts = "allow_scripts"
     }
 }
 
@@ -182,6 +246,10 @@ private struct Response: Decodable {
     var catalog: [ListInfo]?
     var presets: [Preset]?
     var edit: EntryEdit?
+    var tunnels: TunnelList?
+    var tunnel: Tunnel?
+    var check: TunnelCheck?
+    var logs: [String]?
 }
 
 enum DaemonError: LocalizedError, Equatable {
@@ -242,6 +310,48 @@ enum Daemon {
     static func restart() async throws { _ = try await send(Request(cmd: "restart")) }
 
     static func refreshImport(_ name: String) async throws { _ = try await send(Request(cmd: "list_refresh", name: name)) }
+
+    // MARK: Tunnels
+
+    private static let oldService = DaemonError.failed("The service is older than this app and has no tunnels. Update it (Advanced → Restart service).")
+
+    static func tunnels() async throws -> TunnelList {
+        do {
+            guard let t = try await send(Request(cmd: "tunnels")).tunnels else { throw oldService }
+            return t
+        } catch DaemonError.failed(let m) where m.contains("unknown command") { throw oldService }
+    }
+
+    static func tunnelCheck(text: String) async throws -> TunnelCheck {
+        guard let c = try await send(Request(cmd: "tunnel_check", text: text)).check else { throw oldService }
+        return c
+    }
+
+    static func tunnelImport(name: String, text: String, allowScripts: Bool) async throws {
+        _ = try await send(Request(cmd: "tunnel_import", name: name, text: text, allowScripts: allowScripts))
+    }
+
+    static func tunnelConnect(_ name: String, secrets: TunnelSecrets?) async throws {
+        _ = try await send(Request(cmd: "tunnel_connect", name: name, username: secrets?.username.nilIfEmpty,
+                                   password: secrets?.password.nilIfEmpty, keyPassword: secrets?.keyPassword.nilIfEmpty))
+    }
+
+    static func tunnelCredentials(_ name: String, secrets: TunnelSecrets) async throws {
+        _ = try await send(Request(cmd: "tunnel_credentials", name: name, username: secrets.username.nilIfEmpty,
+                                   password: secrets.password.nilIfEmpty, keyPassword: secrets.keyPassword.nilIfEmpty))
+    }
+
+    static func tunnelDisconnect(_ name: String) async throws { _ = try await send(Request(cmd: "tunnel_disconnect", name: name)) }
+    static func tunnelRemove(_ name: String) async throws { _ = try await send(Request(cmd: "tunnel_remove", name: name)) }
+    static func tunnelRename(_ name: String, to new: String) async throws {
+        _ = try await send(Request(cmd: "tunnel_rename", name: name, newName: new))
+    }
+    static func tunnelAutoConnect(_ name: String, _ on: Bool) async throws {
+        _ = try await send(Request(cmd: "tunnel_auto_connect", enabled: on, name: name))
+    }
+    static func tunnelLogs(_ name: String) async throws -> [String] {
+        try await send(Request(cmd: "tunnel_logs", name: name)).logs ?? []
+    }
 
     private static func send(_ req: Request) async throws -> Response {
         let payload = try JSONEncoder().encode(req) + Data("\n".utf8)
@@ -322,4 +432,8 @@ enum Daemon {
     private static func posixError(_ op: String) -> DaemonError {
         .failed("\(op): \(String(cString: strerror(errno)))")
     }
+}
+
+extension String {
+    var nilIfEmpty: String? { isEmpty ? nil : self }
 }
