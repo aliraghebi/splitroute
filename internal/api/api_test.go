@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/aliraghebi/splitroute/internal/config"
+	"github.com/aliraghebi/splitroute/internal/tunnel"
 )
 
 // noBackend fails every call; "presets" must not need the daemon.
@@ -217,5 +218,107 @@ func TestRestart(t *testing.T) {
 	r := Respond(m, Request{Cmd: "restart"})
 	if !r.OK || m.restarts != 1 || r.Config != nil || !reflect.DeepEqual(m.cfg, before) {
 		t.Fatalf("restart: %+v, %d restarts", r, m.restarts)
+	}
+}
+
+// tunnelBackend records tunnel calls.
+type tunnelBackend struct {
+	noBackend
+	calls []string
+	creds tunnel.Credentials
+}
+
+func (b *tunnelBackend) Tunnels() (TunnelList, error) {
+	return TunnelList{Tunnels: []Tunnel{{Name: "Work", State: tunnel.Connected}}}, nil
+}
+func (b *tunnelBackend) TunnelImport(name string, p []byte, allow bool) (Tunnel, error) {
+	b.calls = append(b.calls, fmt.Sprintf("import %s %d %v", name, len(p), allow))
+	return Tunnel{Name: name}, nil
+}
+func (b *tunnelBackend) TunnelRemove(n string) error {
+	b.calls = append(b.calls, "remove "+n)
+	return nil
+}
+func (b *tunnelBackend) TunnelRename(n, m string) error {
+	b.calls = append(b.calls, "rename "+n+" "+m)
+	return nil
+}
+func (b *tunnelBackend) TunnelAutoConnect(n string, on bool) error {
+	b.calls = append(b.calls, fmt.Sprintf("auto %s %v", n, on))
+	return nil
+}
+func (b *tunnelBackend) TunnelConnect(n string, c tunnel.Credentials) error {
+	b.calls, b.creds = append(b.calls, "connect "+n), c
+	return nil
+}
+func (b *tunnelBackend) TunnelCredentials(n string, c tunnel.Credentials) error {
+	b.calls, b.creds = append(b.calls, "credentials "+n), c
+	return nil
+}
+func (b *tunnelBackend) TunnelDisconnect(n string) error {
+	b.calls = append(b.calls, "disconnect "+n)
+	return nil
+}
+func (b *tunnelBackend) TunnelLogs(n string) ([]string, error) { return []string{"line"}, nil }
+
+func TestTunnelCommands(t *testing.T) {
+	yes := true
+	tests := []struct {
+		req     Request
+		call    string
+		wantErr string
+	}{
+		{req: Request{Cmd: "tunnel_import", Name: "Work", Text: "remote h", AllowScripts: true}, call: "import Work 8 true"},
+		{req: Request{Cmd: "tunnel_import", Name: "Work"}, wantErr: "needs a name and the profile"},
+		{req: Request{Cmd: "tunnel_remove", Name: "Work"}, call: "remove Work"},
+		{req: Request{Cmd: "tunnel_remove"}, wantErr: "needs a name"},
+		{req: Request{Cmd: "tunnel_rename", Name: "Work", NewName: "Office"}, call: "rename Work Office"},
+		{req: Request{Cmd: "tunnel_auto_connect", Name: "Work", Enabled: &yes}, call: "auto Work true"},
+		{req: Request{Cmd: "tunnel_auto_connect", Name: "Work"}, wantErr: "needs enabled"},
+		{req: Request{Cmd: "tunnel_connect", Name: "Work"}, call: "connect Work"},
+		{req: Request{Cmd: "tunnel_disconnect", Name: "Work"}, call: "disconnect Work"},
+		{req: Request{Cmd: "tunnel_nope", Name: "Work"}, wantErr: "unknown command"},
+	}
+	for _, tt := range tests {
+		b := &tunnelBackend{}
+		r := Respond(b, tt.req)
+		if tt.wantErr != "" {
+			if r.OK || !strings.Contains(r.Error, tt.wantErr) {
+				t.Errorf("%s: got %+v, want error %q", tt.req.Cmd, r, tt.wantErr)
+			}
+			continue
+		}
+		if !r.OK || !slices.Equal(b.calls, []string{tt.call}) {
+			t.Errorf("%s: got %+v, calls %q, want %q", tt.req.Cmd, r, b.calls, tt.call)
+		}
+	}
+	// Credentials reach the backend, and only as credentials.
+	b := &tunnelBackend{}
+	Respond(b, Request{Cmd: "tunnel_credentials", Name: "Work", Username: "u", Password: "p", KeyPassword: "k"})
+	if want := (tunnel.Credentials{User: "u", Pass: "p", KeyPass: "k", HaveAuth: true, HaveKey: true}); b.creds != want {
+		t.Errorf("creds = %+v, want %+v", b.creds, want)
+	}
+	b = &tunnelBackend{}
+	Respond(b, Request{Cmd: "tunnel_connect", Name: "Work"})
+	if b.creds.HaveAuth || b.creds.HaveKey {
+		t.Errorf("connect without credentials claims to have some: %+v", b.creds)
+	}
+	if r := Respond(b, Request{Cmd: "tunnels"}); !r.OK || len(r.Tunnels.Tunnels) != 1 {
+		t.Errorf("tunnels: %+v", r)
+	}
+	if r := Respond(b, Request{Cmd: "tunnel_logs", Name: "Work"}); !r.OK || len(r.Logs) != 1 {
+		t.Errorf("tunnel_logs: %+v", r)
+	}
+	// check parses without touching the backend; scripts show up for the confirm step.
+	r := Respond(&tunnelBackend{}, Request{Cmd: "tunnel_check", Text: "remote h 1\nup x.sh\nauth-user-pass\n"})
+	if !r.OK || r.Check == nil || !r.Check.NeedsAuth || !slices.Equal(r.Check.Scripts, []string{"up"}) {
+		t.Errorf("tunnel_check: %+v", r)
+	}
+	if r := Respond(&tunnelBackend{}, Request{Cmd: "tunnel_check", Text: "remote h\nmanagement 1 2\n"}); r.OK {
+		t.Error("tunnel_check accepted a management directive")
+	}
+	// A backend without tunnel support says so instead of panicking.
+	if r := Respond(noBackend{}, Request{Cmd: "tunnels"}); r.OK || !strings.Contains(r.Error, "no tunnel support") {
+		t.Errorf("no support: %+v", r)
 	}
 }

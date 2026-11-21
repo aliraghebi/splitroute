@@ -12,6 +12,18 @@
 //	{"cmd": "lists"}                           → lists available in the latest release
 //	{"cmd": "presets"}                         → presets
 //
+// Tunnels (OpenVPN; addressed by name; see tunnels.go). Credentials in a
+// request are used for that connection only:
+//
+//	{"cmd": "tunnels"}                                          → tunnels
+//	{"cmd": "tunnel_check", "text": "<.ovpn>"}                  → check (what the profile asks for)
+//	{"cmd": "tunnel_import", "name": "Work", "text": "<.ovpn>", "allow_scripts": false} → tunnel
+//	{"cmd": "tunnel_connect", "name": "Work", "username": "…", "password": "…"}
+//	{"cmd": "tunnel_credentials", "name": "Work", "username": "…", "password": "…", "key_password": "…"}
+//	{"cmd": "tunnel_disconnect" | "tunnel_remove" | "tunnel_logs", "name": "Work"}  (logs → logs)
+//	{"cmd": "tunnel_rename", "name": "Work", "new_name": "Office"}
+//	{"cmd": "tunnel_auto_connect", "name": "Work", "enabled": true}
+//
 // List edits (each → config; entry edits also → edit counts):
 //
 //	{"cmd": "list_create", "name": "Work", "action": "direct"}       new custom list
@@ -76,6 +88,13 @@ type Request struct {
 	// file or domain set, read like an import). The app reads the file; the
 	// daemon never opens a path from the socket.
 	Text string `json:"text,omitempty"`
+
+	// Tunnel commands. Credentials are used and dropped; they are never
+	// stored, logged or returned.
+	Username     string `json:"username,omitempty"`
+	Password     string `json:"password,omitempty"`
+	KeyPassword  string `json:"key_password,omitempty"`
+	AllowScripts bool   `json:"allow_scripts,omitempty"` // tunnel_import: the user confirmed the profile's script directives
 }
 
 type Response struct {
@@ -87,6 +106,11 @@ type Response struct {
 	Catalog []lists.Info      `json:"catalog,omitempty"` // "lists": titles of the release lists
 	Presets []config.Preset   `json:"presets,omitempty"`
 	Edit    *config.EntryEdit `json:"edit,omitempty"` // entries_add, entries_remove, entries_set
+
+	Tunnels *TunnelList  `json:"tunnels,omitempty"` // tunnels
+	Tunnel  *Tunnel      `json:"tunnel,omitempty"`  // tunnel_import
+	Check   *TunnelCheck `json:"check,omitempty"`   // tunnel_check
+	Logs    []string     `json:"logs,omitempty"`    // tunnel_logs
 }
 
 const (
@@ -156,6 +180,9 @@ func Handle(c net.Conn, b Backend) {
 
 // Respond answers one request.
 func Respond(b Backend, req Request) Response {
+	if r, ok := respondTunnel(b, req); ok {
+		return r
+	}
 	var r Response
 	var err error
 	switch req.Cmd {

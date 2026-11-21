@@ -34,6 +34,10 @@ func (a *app) watch() error {
 		defer ln.Close()
 		go api.Serve(ln, a)
 	}
+	// OpenVPN processes are our children but outlive us if we exit; stop them
+	// on every way out (the service manager starts us again, tunnels reconnect).
+	defer a.tunnels.DisconnectAll()
+	a.startAutoTunnels()
 	var st state.State
 	var staleWarned bool
 	a.settingsChanged() // baseline, before the first read

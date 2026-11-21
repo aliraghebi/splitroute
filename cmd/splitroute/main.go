@@ -24,6 +24,7 @@ import (
 	"github.com/aliraghebi/splitroute/internal/platform"
 	"github.com/aliraghebi/splitroute/internal/state"
 	"github.com/aliraghebi/splitroute/internal/store"
+	"github.com/aliraghebi/splitroute/internal/tunnel"
 )
 
 var version = "dev"
@@ -119,6 +120,11 @@ type app struct {
 	restart chan struct{} // set by watch: asks it to exit, keeping the routes
 	errMu   sync.Mutex
 	lastErr string // watch: the last failed apply, for status
+
+	tunnels *tunnel.Manager // OpenVPN tunnels, run by the service
+
+	// Tests only: where OpenVPN is and where its management sockets go.
+	openvpnPathForTest, runDirForTest string
 }
 
 func newApp(goos, cfgPath string, dry bool) *app {
@@ -135,6 +141,7 @@ func newApp(goos, cfgPath string, dry bool) *app {
 		}
 	}
 	a.routes = route.Engine{GOOS: goos, Query: a.query, Change: a.change}
+	a.tunnels = &tunnel.Manager{L: ovpnLauncher{a}}
 	return a
 }
 
