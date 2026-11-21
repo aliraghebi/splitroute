@@ -3,6 +3,9 @@
 package main
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -10,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aliraghebi/splitroute/internal/store"
 	"github.com/aliraghebi/splitroute/internal/tunnel"
 )
 
@@ -145,8 +149,8 @@ func TestLiveTunnelLifecycle(t *testing.T) {
 	if len(logs) == 0 {
 		t.Error("no OpenVPN output was captured")
 	}
-	if entries, _ := os.ReadDir(a.runDirForTest); len(entries) != 0 {
-		t.Errorf("management socket left behind: %v", entries)
+	if socks, _ := filepath.Glob(filepath.Join(a.runDirForTest, "*.sock")); len(socks) != 0 {
+		t.Errorf("management socket left behind: %v", socks)
 	}
 }
 
@@ -164,5 +168,26 @@ func TestOpenVPNNeedsAPin(t *testing.T) {
 	openvpnSHA256 = strings.Repeat("0", 64)
 	if _, err := a.openvpnPath(); err == nil {
 		t.Error("a pin that matches nothing was accepted")
+	}
+}
+
+// A profile stored without its scripts confirmed (an older check was laxer, or
+// the row was edited) must not start.
+func TestStartRefusesUnconfirmedScripts(t *testing.T) {
+	a := testApp(t, false, true)
+	a.openvpnPathForTest = "/nonexistent"
+	text := []byte(testProfile + "up /etc/up.sh\n")
+	s, _ := a.settings()
+	sum := sha256.Sum256(text)
+	id, err := s.AddTunnel(store.Tunnel{Name: "Sneaky", ProfileSHA256: hex.EncodeToString(sum[:])})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.writeProfile(id, text); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = ovpnLauncher{a}.Start(context.Background(), strconv.FormatInt(id, 10))
+	if err == nil || !strings.Contains(err.Error(), "never confirmed") {
+		t.Fatalf("Start err = %v", err)
 	}
 }

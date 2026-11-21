@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"sync"
 	"syscall"
@@ -122,15 +123,27 @@ func (l ovpnLauncher) Start(ctx context.Context, idStr string) (net.Conn, tunnel
 	if sum := sha256.Sum256(text); hex.EncodeToString(sum[:]) != t.ProfileSHA256 {
 		return nil, nil, errors.New("the stored profile changed since it was imported; import it again")
 	}
-	if _, err := tunnel.ParseProfile(text); err != nil {
+	pr, err := tunnel.ParseProfile(text)
+	if err != nil {
 		return nil, nil, err
 	}
-	bin, err := a.openvpnPath()
+	for _, d := range pr.Scripts { // a profile stored by an older, laxer check
+		if !slices.Contains(t.Scripts, d) {
+			return nil, nil, fmt.Errorf("the profile runs %q, which was never confirmed; import it again", d)
+		}
+	}
+	src, err := a.openvpnPath()
 	if err != nil {
 		return nil, nil, err
 	}
 	runDir := a.tunnelRunDir()
 	if err := secureDir(runDir); err != nil {
+		return nil, nil, err
+	}
+	// Run a copy of exactly the bytes that were hashed, from the root-only dir:
+	// hashing and exec'ing the same path leaves a window to swap the file.
+	bin, err := a.copyOpenVPN(src, runDir)
+	if err != nil {
 		return nil, nil, err
 	}
 	sock := filepath.Join(runDir, idStr+".sock")
@@ -170,6 +183,26 @@ func (l ovpnLauncher) Start(ctx context.Context, idStr string) (net.Conn, tunnel
 		return nil, nil, err
 	}
 	return conn, p, nil
+}
+
+// copyOpenVPN verifies src against the pin and writes the verified bytes to
+// runDir, returning the copy's path.
+func (a *app) copyOpenVPN(src, runDir string) (string, error) {
+	b, err := os.ReadFile(src)
+	if err != nil {
+		return "", err
+	}
+	if a.openvpnPathForTest == "" {
+		if sum := sha256.Sum256(b); hex.EncodeToString(sum[:]) != openvpnSHA256 {
+			return "", errors.New("the bundled OpenVPN does not match the build; reinstall Splitroute")
+		}
+	}
+	dst := filepath.Join(runDir, "openvpn")
+	_ = os.Remove(dst)
+	if err := os.WriteFile(dst, b, 0o700); err != nil {
+		return "", err
+	}
+	return dst, nil
 }
 
 type osProc struct {

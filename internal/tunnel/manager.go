@@ -234,10 +234,13 @@ func (r *run) answerLocked(need string) bool {
 	return true
 }
 
+// failLocked marks the tunnel failed for good and stops OpenVPN (it would
+// otherwise wait forever for what it can't get).
 func (r *run) failLocked(msg string) {
 	r.info.State = Failed
 	r.info.Error = msg
 	r.final = true
+	r.cancel()
 }
 
 func (r *run) loop(ctx context.Context) {

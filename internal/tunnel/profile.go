@@ -110,7 +110,13 @@ func ParseProfile(text []byte) (Profile, error) {
 			problems = append(problems, fmt.Sprintf("line %d is longer than %d bytes", n+1, maxLine))
 			continue
 		}
-		line = strings.TrimSpace(line)
+		// Only what C isspace skips: strings.TrimSpace also strips U+00A0 and
+		// U+0085, which OpenVPN doesn't, and that difference hides directives.
+		line = strings.Trim(line, " \t\r")
+		if block == "" && !strings.HasPrefix(line, "#") && !strings.HasPrefix(line, ";") && !isASCII(line) {
+			problems = append(problems, fmt.Sprintf("line %d contains non-ASCII characters outside a comment", n+1))
+			continue
+		}
 		if block != "" {
 			// OpenVPN ends a block at a line that starts with the closing tag
 			// (anything after it too); require the tag alone so we agree.
@@ -277,4 +283,13 @@ func ValidName(name string) error {
 		}
 	}
 	return nil
+}
+
+func isASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 0x80 {
+			return false
+		}
+	}
+	return true
 }

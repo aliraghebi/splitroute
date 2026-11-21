@@ -75,6 +75,11 @@ func TestParseProfile(t *testing.T) {
 		{name: "closing tag with trailing text", text: base + "<cert>\nx\n</cert>-\nmanagement 1 2\n", wantErr: "inside <cert>"},
 		{name: "other closing tag inside a block", text: "remote h\n<ca>\nx\n</cert>\n</ca>\n", wantErr: "inside <ca>"},
 		{name: "stray closing tag", text: base + "</ca>\n", wantErr: "unexpected"},
+		{name: "NBSP hides a block tag", text: base + "ignore-unknown-option \u00a0<ca> \u00a0</ca>\nremote x\n", wantErr: "non-ASCII"},
+		{name: "NBSP before a tag", text: base + "\u00a0<tls-crypt>\nmanagement 1 2\n\u00a0</tls-crypt>\n", wantErr: "non-ASCII"},
+		{name: "NEL before a directive", text: base + "\u0085management 1 2\n", wantErr: "non-ASCII"},
+		{name: "non-ASCII in a comment is fine", text: base + "# caf\u00e9\n",
+			want: Profile{Remotes: []string{"vpn.example.com:443"}}},
 		{name: "unclosed quote", text: base + "remote \"h\n", wantErr: "unclosed"},
 	}
 	for _, tt := range tests {
