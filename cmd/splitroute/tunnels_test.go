@@ -110,7 +110,7 @@ func TestLiveTunnelLifecycle(t *testing.T) {
 	a.openvpnPathForTest = bin
 	a.runDirForTest = filepath.Join(os.TempDir(), "sr-"+strconv.Itoa(os.Getpid()))
 	t.Cleanup(func() { os.RemoveAll(a.runDirForTest) })
-	profile := "client\ndev tun\nnobind\nremote 127.0.0.1 1 udp\nauth-user-pass\nresolv-retry 0\n" +
+	profile := "client\ndev tun\nscript-security 2\nnobind\nremote 127.0.0.1 1 udp\nauth-user-pass\nresolv-retry 0\n" +
 		"peer-fingerprint 00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF\n"
 	if _, err := a.TunnelImport("Live", []byte(profile), false); err != nil {
 		t.Fatal(err)
@@ -147,5 +147,22 @@ func TestLiveTunnelLifecycle(t *testing.T) {
 	}
 	if entries, _ := os.ReadDir(a.runDirForTest); len(entries) != 0 {
 		t.Errorf("management socket left behind: %v", entries)
+	}
+}
+
+func TestOpenVPNNeedsAPin(t *testing.T) {
+	a := testApp(t, false, true)
+	old := openvpnSHA256
+	defer func() { openvpnSHA256 = old }()
+	openvpnSHA256 = ""
+	if p, err := a.openvpnPath(); err == nil {
+		t.Fatalf("an unpinned build ran %s: any openvpn next to the binary would run as root", p)
+	}
+	if l, _ := a.Tunnels(); l.Unavailable == "" {
+		t.Error("tunnels report no problem without a pin")
+	}
+	openvpnSHA256 = strings.Repeat("0", 64)
+	if _, err := a.openvpnPath(); err == nil {
+		t.Error("a pin that matches nothing was accepted")
 	}
 }

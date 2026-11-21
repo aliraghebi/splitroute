@@ -413,12 +413,13 @@ extension AppModel {
     }
 
     /// A tunnel waiting for credentials that the Keychain has: send them, without asking.
-    /// At most every 10 s per tunnel, so a service that doesn't take them isn't hammered.
+    /// At most once a minute per tunnel, so a denied Keychain prompt or a service that doesn't take them isn't hammered.
     func supplyTunnelCredentials() async {
         for t in tunnels where t.state == .needsAuth {
-            guard let s = TunnelKeychain.load(t.name) else { continue }
-            if let last = tunnelSupplied[t.name], Date().timeIntervalSince(last) < 10 { continue }
+            // Before the Keychain read: a denied access prompt must not come back on every poll.
+            if let last = tunnelSupplied[t.name], Date().timeIntervalSince(last) < 60 { continue }
             tunnelSupplied[t.name] = Date()
+            guard let s = TunnelKeychain.load(t.name) else { continue }
             try? await Daemon.tunnelCredentials(t.name, secrets: s)
         }
     }

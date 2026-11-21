@@ -110,6 +110,11 @@ struct TunnelsPage: View {
     private func toggle(_ t: Tunnel, _ on: Bool) {
         if !on { Task { await model.disconnectTunnel(t.name) }; return }
         if model.needsCredentialPrompt(t) { promptFor = t; return }
+        // The server refused what is saved: ask again instead of retrying the same password.
+        if t.state == .failed, let e = t.error, e.contains("username or password") || e.contains("key password") {
+            promptFor = t
+            return
+        }
         Task { await model.connectTunnel(t) }
     }
 

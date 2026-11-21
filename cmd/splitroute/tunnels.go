@@ -57,10 +57,13 @@ func (a *app) openvpnPath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if openvpnSHA256 != "" {
-		if sum := sha256.Sum256(b); hex.EncodeToString(sum[:]) != openvpnSHA256 {
-			return "", errors.New("the bundled OpenVPN does not match the build; reinstall Splitroute")
-		}
+	// No pin, no tunnels: a daemon built without one (the CLI archives, go run)
+	// could be made to run a binary dropped next to it, as root.
+	if openvpnSHA256 == "" {
+		return "", errors.New("this build of splitroute can't run tunnels (it has no pinned OpenVPN); use the Splitroute app")
+	}
+	if sum := sha256.Sum256(b); hex.EncodeToString(sum[:]) != openvpnSHA256 {
+		return "", errors.New("the bundled OpenVPN does not match the build; reinstall Splitroute")
 	}
 	return p, nil
 }
@@ -132,8 +135,14 @@ func (l ovpnLauncher) Start(ctx context.Context, idStr string) (net.Conn, tunnel
 	}
 	sock := filepath.Join(runDir, idStr+".sock")
 	_ = os.Remove(sock)
-	cmd := exec.Command(bin, "--config", profile, "--cd", filepath.Dir(profile),
-		"--management", sock, "unix", "--management-hold", "--management-query-passwords", "--verb", "3")
+	args := []string{"--config", profile, "--cd", filepath.Dir(profile),
+		"--management", sock, "unix", "--management-hold", "--management-query-passwords", "--verb", "3"}
+	if len(t.Scripts) == 0 {
+		// Last option wins: whatever the profile says, nothing runs unless the user confirmed scripts.
+		args = append(args, "--script-security", "1")
+	}
+	cmd := exec.Command(bin, args...)
+	cmd.Env = []string{"PATH=/usr/bin:/bin:/usr/sbin:/sbin"} // nothing inherited from whoever started the service
 	out, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, nil, err

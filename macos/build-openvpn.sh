@@ -22,7 +22,7 @@ LZO=2.10;       LZO_SHA=c0f892943208266f9b6543b3ae308fab6284c5c90e627931446fb49b
 WORK=.build/openvpn
 OUT=.build/openvpn/openvpn-universal # build-app.sh copies it into the app
 MIN=13.0
-STAMP="$OPENSSL $OPENVPN $LZ4 $LZO $MIN"
+STAMP="$OPENSSL $OPENVPN $LZ4 $LZO $MIN r2"
 mkdir -p "$WORK/src"
 
 if [ -f "$OUT" ] && [ "$(cat "$WORK/stamp" 2>/dev/null)" = "$STAMP" ]; then
@@ -44,14 +44,20 @@ JOBS=$(sysctl -n hw.ncpu)
 build_arch() { # arch(arm64|x86_64) openssl-target host
   arch=$1; target=$2; host=$3
   P="$PWD/$WORK/$arch"
+  # OpenSSL bakes its config, module and engine directories into the binary.
+  # The daemon runs as root, so they must be paths nobody but root can create
+  # (not this build directory, which another user's machine may have too).
+  SSLROOT=/var/empty/splitroute-openssl
   rm -rf "$P" "$WORK/b-$arch"; mkdir -p "$P" "$WORK/b-$arch"
   CFLAGS="-arch $arch -mmacosx-version-min=$MIN -O2"
   export CC="clang -arch $arch -mmacosx-version-min=$MIN"
   B="$WORK/b-$arch"
 
   tar -xzf "$WORK/src/openssl-$OPENSSL.tar.gz" -C "$B"
-  (cd "$B/openssl-$OPENSSL" && ./Configure "$target" no-shared no-tests no-apps no-docs "-mmacosx-version-min=$MIN" --prefix="$P" --libdir=lib >/dev/null \
-    && make -j"$JOBS" build_libs >/dev/null && make install_dev >/dev/null)
+  (cd "$B/openssl-$OPENSSL" && ./Configure "$target" no-shared no-tests no-apps no-docs "-mmacosx-version-min=$MIN" \
+      --prefix="$SSLROOT" --openssldir="$SSLROOT/ssl" --libdir=lib >/dev/null \
+    && make -j"$JOBS" build_libs >/dev/null && make install_dev DESTDIR="$P/destdir" >/dev/null \
+    && mkdir -p "$P/lib" "$P/include" && cp "$P/destdir$SSLROOT"/lib/*.a "$P/lib/" && cp -R "$P/destdir$SSLROOT/include/openssl" "$P/include/")
 
   tar -xzf "$WORK/src/lz4-$LZ4.tar.gz" -C "$B"
   (cd "$B/lz4-$LZ4" && make -C lib -j"$JOBS" liblz4.a CC="$CC" CFLAGS="$CFLAGS" >/dev/null \
@@ -79,6 +85,9 @@ lipo -create "$WORK/arm64/openvpn" "$WORK/x86_64/openvpn" -output "$OUT"
 strip -x "$OUT"
 # A dylib dependency would break the single-file pin: only system libraries allowed.
 # (Dependency lines start with a tab; the per-architecture headers don't.)
+if strings "$OUT" | grep -q "$PWD"; then
+  echo "openvpn has the build directory compiled in" >&2; exit 1
+fi
 BAD=$(otool -L "$OUT" | awk '/^\t/ && $1 !~ /^\/(usr\/lib|System)\//')
 if [ -n "$BAD" ]; then
   echo "openvpn links a non-system library:" >&2; echo "$BAD" >&2; exit 1
