@@ -16,7 +16,7 @@ only talks to the daemon through them.
 
 ## Later (not planned yet)
 
-Our own tunnels (OpenVPN, sing-box protocols, HTTP/SOCKS proxy) and mobile apps. Notes are kept at the end
+Our own tunnels (sing-box protocols, HTTP/SOCKS proxy; OpenVPN on macOS is done, see below) and mobile apps. Notes are kept at the end
 so near-term choices don't block them.
 
 ---
@@ -150,3 +150,10 @@ refresh interval (no config key), entry counts per type for release lists (not i
   account for VPN apps. Android: `VpnService`. Flutter vs native decided then.
 - **What the near-term work must not break for this**: the core stays in importable packages (track 1);
   rule matching stays separate from the route backend (track 2).
+
+## OpenVPN tunnels on macOS (done in 0.10)
+
+Tunnels page: import `.ovpn`, connect/disconnect, state, logs, Keychain credentials, auto-connect. The
+daemon supervises a bundled static OpenVPN over its management interface. Next, in order:
+kill switch (a `pf` anchor owned by the supervisor; route-mode `up`/`down` must not flush it), lists routed
+via a tunnel (`tunnel:<name>` action), Linux (use the system `openvpn`), `splitroute tunnel` CLI.

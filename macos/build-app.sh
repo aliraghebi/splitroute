@@ -6,6 +6,16 @@ cd "$(dirname "$0")"
 VERSION=${VERSION:-dev}
 APP=build/Splitroute.app
 
+# OpenVPN for the Tunnels page: one static universal binary. The daemon refuses
+# to run it unless its sha256 matches the one compiled in below, so it is signed
+# first (signing changes the bytes) and hashed after.
+./build-openvpn.sh
+OVPN=.build/openvpn/openvpn-universal
+OVPN_SIGNED=.build/openvpn/openvpn-signed
+cp "$OVPN" "$OVPN_SIGNED"
+codesign --force --sign - "$OVPN_SIGNED"
+OVPN_SHA=$(shasum -a 256 "$OVPN_SIGNED" | cut -d' ' -f1)
+
 swift build -c release --arch arm64 --arch x86_64
 BIN=$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)
 rm -rf build && mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
@@ -18,16 +28,28 @@ swift assets/icon.swift "$APP/Contents/Resources/AppIcon.icns"
 
 for arch in arm64 amd64; do
   (cd .. && CGO_ENABLED=0 GOOS=darwin GOARCH=$arch go build -trimpath \
-    -ldflags "-s -w -X main.version=$VERSION" -o "macos/build/splitroute-$arch" ./cmd/splitroute)
+    -ldflags "-s -w -X main.version=$VERSION -X main.openvpnSHA256=$OVPN_SHA" -o "macos/build/splitroute-$arch" ./cmd/splitroute)
 done
 lipo -create build/splitroute-arm64 build/splitroute-amd64 -output "$APP/Contents/Resources/splitroute"
 rm build/splitroute-arm64 build/splitroute-amd64
+
+cp "$OVPN_SIGNED" "$APP/Contents/Resources/openvpn"
+# Licenses of what the app ships (OpenVPN is GPL-2.0 with an OpenSSL exception,
+# run as a separate program; OpenSSL is Apache-2.0; lz4 BSD-2 for the library; lzo GPL-2.0+).
+mkdir -p "$APP/Contents/Resources/Licenses"
+SRC=.build/openvpn/src
+tar -xzOf "$SRC"/openvpn-*.tar.gz '*/COPYING' '*/COPYRIGHT.GPL' > "$APP/Contents/Resources/Licenses/OpenVPN.txt"
+tar -xzOf "$SRC"/openssl-*.tar.gz '*/LICENSE.txt' > "$APP/Contents/Resources/Licenses/OpenSSL.txt"
+tar -xzOf "$SRC"/lz4-*.tar.gz '*/lib/LICENSE' > "$APP/Contents/Resources/Licenses/lz4.txt"
+tar -xzOf "$SRC"/lzo-*.tar.gz '*/COPYING' > "$APP/Contents/Resources/Licenses/lzo.txt"
+echo "OpenVPN source: https://github.com/OpenVPN/openvpn (release tarball sha256 in macos/build-openvpn.sh)" > "$APP/Contents/Resources/Licenses/SOURCE.txt"
 
 # The service plist the app registers with SMAppService (Login Items).
 mkdir -p "$APP/Contents/Library/LaunchDaemons"
 cp LaunchDaemon.plist "$APP/Contents/Library/LaunchDaemons/io.github.aliraghebi.splitroute.plist"
 
 codesign --force --sign - "$APP/Contents/Resources/splitroute"
+[ "$(shasum -a 256 "$APP/Contents/Resources/openvpn" | cut -d' ' -f1)" = "$OVPN_SHA" ] || { echo "openvpn changed after hashing" >&2; exit 1; }
 codesign --force --sign - "$APP"
 
 # Drag-to-install disk image with a styled window (assets/). dmgbuild writes the

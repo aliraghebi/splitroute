@@ -16,12 +16,13 @@ and imports, and a redesigned macOS settings app. Later: our own tunnels and mob
 | `internal/config/` | `Config` type, `Validate`, JSON and 0.1 `list = action` parsing (import and first-run migration), presets, pure list edits (`edit.go`: create, enable, remove, rename, action, move, add/remove entries) shared by the CLI and the socket |
 | `internal/store/` | Settings database (SQLite, `modernc.org/sqlite`): schema in `migrations/*.sql` (applied by `PRAGMA user_version`), `Init`/`Config`/`Update` (one transaction), `Changed` (`PRAGMA data_version`); imports (`imports.go`): state, entries, `SaveDownload`, `MarkChecked`, `Due` |
 | `internal/lists/` | Release lists: download, `SHA256SUMS` check, last-good cache, `.list` parsing, `Catalog` (titles, descriptions, suggested actions; shown by the app and `splitroute lists`). Imports: `ParseText` (entries, hosts files, domain sets; fixtures in `testdata/`), `FetchImport` (conditional GET, limits), `CheckImport` |
+| `internal/tunnel/` | OpenVPN tunnels, pure: `.ovpn` check (`profile.go`: refuses directives the daemon owns and file references, reports script directives), management-interface client (`mgmt.go`), `Manager` (`manager.go`: start/stop/backoff, credentials in memory, logs; the `Launcher` that starts the process is passed in) |
 | `internal/state/` | Saved state file and the lock around route changes |
 | `internal/platform/` | OS-specific: command runner types, gateway/VPN detection and parsers, route socket (`netwatch_{darwin,linux}.go`), launchd/systemd files |
 | `internal/engine/route/` | Route-mode engine: diff (`Changes`), per-OS command builders, apply, remove, presence check |
-| `internal/api/` | Control socket for the menu bar app: one JSON request/response per connection, whole-config and per-list edit commands (`list_create` with `text` parses a file's contents like an import), `lists` with the catalog; `Status` wire type |
+| `internal/api/` | Control socket for the menu bar app: one JSON request/response per connection, whole-config and per-list edit commands (`list_create` with `text` parses a file's contents like an import), `lists` with the catalog; `Status` wire type; tunnel commands and wire types in `tunnels.go` |
 | `internal/fileutil/` | Atomic file write |
-| `macos/` | Swift menu bar app (SwiftPM, macOS 13+): AppKit status item, SwiftUI settings (`SettingsView.swift` sidebar, one `*Page.swift` per page, `AddListSheet.swift` for adding lists, shared rows in `Components.swift`), socket client in `Daemon.swift`. `build-app.sh` bundles the Go binary into `Splitroute.app` (with `LaunchDaemon.plist`, which the app registers with SMAppService; upgrades restart the service through the socket's `restart`) and the DMG; `assets/` draws the app icon and DMG background (Swift scripts) and holds the `dmgbuild` layout; `splitroute.rb.in` is the cask |
+| `macos/` | Swift menu bar app (SwiftPM, macOS 13+): AppKit status item, SwiftUI settings (`SettingsView.swift` sidebar, one `*Page.swift` per page, `AddListSheet.swift` for adding lists, shared rows in `Components.swift`, `TunnelsPage.swift` + `AddTunnelSheet.swift` for OpenVPN tunnels, `TunnelSecrets.swift` Keychain wrapper, `OvpnProfile.swift` inlines files a profile references), socket client in `Daemon.swift`. `build-openvpn.sh` builds a static universal OpenVPN from pinned sources; `build-app.sh` bundles it and the Go binary (which pins its sha256) into `Splitroute.app` (with `LaunchDaemon.plist`, which the app registers with SMAppService; upgrades restart the service through the socket's `restart`) and the DMG; `assets/` draws the app icon and DMG background (Swift scripts) and holds the `dmgbuild` layout; `splitroute.rb.in` is the cask |
 
 ## Rules
 
@@ -54,6 +55,14 @@ and imports, and a redesigned macOS settings app. Later: our own tunnels and mob
 - The app never touches routes or the settings database: everything goes through the socket. Wire types in
   `Daemon.swift` mirror the Go JSON; change both together. The app edits with the per-list commands, never
   `set_config` from a stale copy (that would overwrite CLI edits made meanwhile).
+- Tunnels (OpenVPN): the daemon starts OpenVPN only from `cmd/splitroute/tunnels.go` (the one place besides
+  `query`/`change` that runs a program), only the binary next to the executable whose sha256 matches the
+  pin, with the management socket in a root-only dir. Profiles are 0600 files under `<state dir>/tunnels/<id>/`
+  and never in the database (world-readable); the app inlines referenced files, the daemon never opens a
+  path from a profile or from the socket. `tunnel.ParseProfile` runs on import and again before every start.
+  Script directives are allowed only after the user confirms them (`allow_scripts`). Credentials live in the
+  macOS Keychain and in the daemon's memory while a tunnel is wanted; never on disk, in logs or in status.
+  OpenVPN children die with the daemon (`DisconnectAll` on every exit path).
 - English only in code, comments, commits and logs.
 
 ## Verify
